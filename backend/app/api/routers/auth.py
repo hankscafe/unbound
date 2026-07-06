@@ -114,6 +114,8 @@ def get_status(request: Request, session: Session = Depends(db_session)) -> Stat
             authed = True
         except Exception:
             authed = False
+    from app.services import updates
+
     oidc_on = oidc.is_enabled(session)
     return StatusOut(
         setup_required=init_db.setup_required(session),
@@ -121,6 +123,7 @@ def get_status(request: Request, session: Session = Depends(db_session)) -> Stat
         consent_acknowledged=init_db.get_setting(session, init_db.SETTING_CONSENT) == "true",
         secret_key_rotated=init_db.secret_key_rotated(session),
         version=__version__,
+        github_url=updates.repo_url(),
         oidc_enabled=oidc_on,
         oidc_button_label=oidc.button_label(session) if oidc_on else None,
     )

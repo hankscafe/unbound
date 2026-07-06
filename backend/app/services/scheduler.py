@@ -21,9 +21,11 @@ from app.db.session import engine
 log = get_logger("services.scheduler")
 
 _TICK_SECONDS = 60.0
+_UPDATE_CHECK_SECONDS = 6 * 3600.0  # matches the update-check cache TTL
 _stop = threading.Event()
 _thread: threading.Thread | None = None
 _last_run: float = 0.0
+_last_update_check: float = 0.0
 
 
 def _run_cycle() -> None:
@@ -74,7 +76,7 @@ def _run_cycle() -> None:
 
 
 def _loop() -> None:
-    global _last_run
+    global _last_run, _last_update_check
     _last_run = time.time()  # don't fire immediately on boot
     while not _stop.is_set():
         try:
@@ -88,6 +90,16 @@ def _loop() -> None:
                 _run_cycle()
         except Exception as exc:  # pragma: no cover - keep the loop alive
             log.error("scheduler_error", error=str(exc))
+        try:
+            # Update announcements run regardless of the library schedule — admins
+            # should hear about new versions even with automation switched off.
+            if (time.time() - _last_update_check) >= _UPDATE_CHECK_SECONDS or _last_update_check == 0:
+                _last_update_check = time.time()
+                from app.services import updates
+
+                updates.check_and_notify()
+        except Exception as exc:  # pragma: no cover - keep the loop alive
+            log.error("update_check_error", error=str(exc))
         _stop.wait(_TICK_SECONDS)
 
 

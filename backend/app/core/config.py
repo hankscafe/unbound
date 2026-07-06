@@ -59,7 +59,10 @@ class Settings(BaseSettings):
 
     # --- Update checks ---
     update_check_enabled: bool = True
-    github_repo: str = "unbound-app/unbound"
+    github_repo: str = "hankscafe/unbound"
+    # Only needed while the repo is private: a read-only token so the release
+    # check can see releases (UNBOUND_GITHUB_TOKEN). Public repos need none.
+    github_token: str | None = None
 
     @field_validator("cors_origins", mode="before")
     @classmethod

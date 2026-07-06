@@ -7,6 +7,7 @@ export interface AppStatus {
   consent_acknowledged: boolean;
   secret_key_rotated: boolean;
   version: string;
+  github_url: string;
   oidc_enabled: boolean;
   oidc_button_label: string | null;
 }
@@ -78,6 +79,7 @@ export interface Integrations {
   notify_on_new_books: boolean;
   notify_on_complete: boolean;
   notify_on_failure: boolean;
+  notify_on_update: boolean;
 }
 
 export interface Job {

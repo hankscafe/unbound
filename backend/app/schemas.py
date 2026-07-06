@@ -62,6 +62,7 @@ class StatusOut(BaseModel):
     consent_acknowledged: bool
     secret_key_rotated: bool
     version: str
+    github_url: str  # project home, shown in the app footer
     # OIDC single sign-on (drives the SSO button on the login screen)
     oidc_enabled: bool = False
     oidc_button_label: str | None = None
@@ -277,3 +278,4 @@ class IntegrationsSettings(BaseModel):
     notify_on_new_books: bool = False
     notify_on_complete: bool = False
     notify_on_failure: bool = True
+    notify_on_update: bool = True  # announce new Unbound releases

@@ -37,8 +37,8 @@ def set_urls(session: Session, urls_text: str | None) -> None:
     init_db.set_setting(session, init_db.SETTING_NOTIFY_URLS, value)
 
 
-def _event_enabled(session: Session, key: str) -> bool:
-    return init_db.get_bool(session, key)
+def _event_enabled(session: Session, key: str, default: bool = False) -> bool:
+    return init_db.get_bool(session, key, default)
 
 
 def send(title: str, body: str) -> None:
@@ -59,8 +59,8 @@ def send(title: str, body: str) -> None:
         log.warning("notification_failed", error=str(exc))
 
 
-def send_if_enabled(event_key: str, title: str, body: str) -> None:
+def send_if_enabled(event_key: str, title: str, body: str, default: bool = False) -> None:
     with Session(engine) as session:
-        if not _event_enabled(session, event_key):
+        if not _event_enabled(session, event_key, default):
             return
     send(title, body)

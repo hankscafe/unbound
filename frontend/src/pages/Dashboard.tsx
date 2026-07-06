@@ -38,12 +38,6 @@ export default function Dashboard() {
           <span className="font-semibold">Library storage problem:</span> {stats.library_warning}
         </div>
       )}
-      {stats.update_available && (
-        <div className="card p-3 border-audible-500/40 bg-audible-500/10 text-audible-400 text-sm">
-          A new version ({stats.latest_version}) is available. You are on {stats.current_version}.
-        </div>
-      )}
-
       <div>
         <h1 className="text-xl font-semibold text-slate-100">Dashboard</h1>
         <p className="text-sm text-slate-500">Live overview of your linked accounts and library.</p>

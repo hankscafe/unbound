@@ -428,6 +428,10 @@ function IntegrationsSection({ tab }: { tab: "automation" | "abs" | "notificatio
                 <input type="checkbox" checked={form.notify_on_failure} onChange={(e) => set({ notify_on_failure: e.target.checked })} />
                 Download failed
               </label>
+              <label className="flex items-center gap-2 text-sm text-slate-300">
+                <input type="checkbox" checked={form.notify_on_update} onChange={(e) => set({ notify_on_update: e.target.checked })} />
+                New Unbound version
+              </label>
             </div>
             <div>
               <button

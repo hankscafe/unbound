@@ -30,6 +30,9 @@ SETTING_NOTIFY_URLS = "notify_urls_enc"
 SETTING_NOTIFY_NEW_BOOKS = "notify_on_new_books"
 SETTING_NOTIFY_COMPLETE = "notify_on_complete"
 SETTING_NOTIFY_FAILURE = "notify_on_failure"
+SETTING_NOTIFY_UPDATE = "notify_on_update"
+# Update announcements are sent once per version; this remembers the last one.
+SETTING_LAST_NOTIFIED_VERSION = "last_notified_update_version"
 
 
 def get_bool(session: Session, key: str, default: bool = False) -> bool:
