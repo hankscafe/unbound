@@ -1,0 +1,42 @@
+# Unbound — self-hosted Audible library manager.
+# Default stack: backend (API + in-process worker) + frontend (nginx SPA/proxy).
+# Run from the repo root:  docker compose -f deploy/docker-compose.yml up -d --build
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # SECRET_KEY should come from .env; a random one is generated & persisted to
+      # /data/secret.key if unset, but set it explicitly for production.
+      UNBOUND_DATA_DIR: /data
+      UNBOUND_DATABASE_URL: sqlite:////data/unbound.db
+      # Behind nginx TLS termination you keep secure cookies; for plain-HTTP LAN
+      # testing set UNBOUND_COOKIE_SECURE=false in .env.
+    volumes:
+      - unbound_data:/data
+      # The decrypted library is written to /data/library inside the container. Bind-mount
+      # the host directory (or an already-mounted NAS path) where your library should live —
+      # set UNBOUND_LIBRARY_HOST_PATH in .env. It must exist with permissions the container
+      # can write. Point your library profile's root at a path under /data/library.
+      - ${UNBOUND_LIBRARY_HOST_PATH:-./library}:/data/library
+    expose:
+      - "8000"
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${UNBOUND_HTTP_PORT:-8080}:80"
+
+volumes:
+  # App data (SQLite DB, encryption key, logs, temp downloads). The library itself is a
+  # host bind mount (see the backend service above), not a managed volume.
+  unbound_data:

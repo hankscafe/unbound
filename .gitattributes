@@ -1,0 +1,9 @@
+# Normalize line endings to LF in the repo (code runs in Linux containers).
+* text=auto eol=lf
+
+# Binary assets — never normalize.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.webmanifest text eol=lf

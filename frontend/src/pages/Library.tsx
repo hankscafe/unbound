@@ -1,0 +1,403 @@
+import { Fragment, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Book, api } from "../api";
+import { AccountBadge, Empty, Spinner, StatusPill } from "../components/ui";
+
+function fmtRuntime(min: number | null): string {
+  if (!min) return "—";
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return h ? `${h}h ${m}m` : `${m}m`;
+}
+
+function BookModal({
+  book,
+  onClose,
+  onExclude,
+  onDownload,
+}: {
+  book: Book;
+  onClose: () => void;
+  onExclude: (b: Book) => void;
+  onDownload: (b: Book) => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-20 grid place-items-center bg-black/60 px-4 py-8" onClick={onClose}>
+      <div
+        className="card max-h-full w-full max-w-lg overflow-y-auto p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <h2 className="text-lg font-semibold text-slate-100">{book.title}</h2>
+          <button className="shrink-0 text-slate-500 hover:text-slate-300" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+        {book.subtitle && <p className="mt-0.5 text-sm text-slate-400">{book.subtitle}</p>}
+
+        <div className="mt-4 flex gap-4">
+          {book.cover_url && (
+            <img
+              src={book.cover_url}
+              alt=""
+              className="h-28 w-28 shrink-0 rounded object-cover"
+            />
+          )}
+          <dl className="min-w-0 flex-1 space-y-1 text-sm">
+            <Row label="Author" value={book.authors} />
+            <Row label="Narrator" value={book.narrators} />
+            <Row
+              label="Series"
+              value={book.series ? `${book.series}${book.series_sequence ? ` #${book.series_sequence}` : ""}` : null}
+            />
+            <Row label="Runtime" value={fmtRuntime(book.runtime_minutes)} />
+            <Row
+              label="Purchased"
+              value={book.purchase_date ? new Date(book.purchase_date).toLocaleDateString() : null}
+            />
+            <Row label="ASIN" value={book.asin} />
+          </dl>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {book.account_label && (
+            <AccountBadge label={book.account_label} color={book.account_badge_color || undefined} />
+          )}
+          {book.excluded ? (
+            <StatusPill status="excluded" />
+          ) : book.job_state ? (
+            <StatusPill status={book.job_state} />
+          ) : (
+            <StatusPill status="pending" />
+          )}
+        </div>
+
+        {book.output_path && (
+          <p className="mt-3 break-all rounded-lg bg-ink-850 p-2 text-xs text-slate-400">
+            {book.output_path}
+          </p>
+        )}
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          {book.audible_url && (
+            <a className="btn-ghost" href={book.audible_url} target="_blank" rel="noreferrer">
+              View on Audible ↗
+            </a>
+          )}
+          {book.abs_url && (
+            <a className="btn-ghost" href={book.abs_url} target="_blank" rel="noreferrer">
+              Open in AudiobookShelf ↗
+            </a>
+          )}
+          <div className="flex-1" />
+          <button className="btn-ghost" onClick={() => onExclude(book)}>
+            {book.excluded ? "Include" : "Exclude"}
+          </button>
+          {!book.excluded && (
+            <button className="btn-primary" onClick={() => onDownload(book)}>
+              Download
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string | null }) {
+  if (!value) return null;
+  return (
+    <div className="flex gap-2">
+      <dt className="w-20 shrink-0 text-slate-500">{label}</dt>
+      <dd className="min-w-0 break-words text-slate-200">{value}</dd>
+    </div>
+  );
+}
+
+const ACTIVE_STATES = ["queued", "downloading", "downloaded", "decrypting", "tagging", "moving"];
+
+function bookStatus(b: Book): "excluded" | "downloaded" | "in_progress" | "failed" | "pending" {
+  if (b.excluded) return "excluded";
+  if (b.job_state === "completed") return "downloaded";
+  if (b.job_state && ACTIVE_STATES.includes(b.job_state)) return "in_progress";
+  if (b.job_state === "failed") return "failed";
+  return "pending";
+}
+
+function BookRow({
+  b,
+  checked,
+  onCheck,
+  onOpen,
+  onExclude,
+  onDownload,
+}: {
+  b: Book;
+  checked: boolean;
+  onCheck: () => void;
+  onOpen: () => void;
+  onExclude: () => void;
+  onDownload: () => void;
+}) {
+  return (
+    <tr
+      onClick={onOpen}
+      className={`cursor-pointer border-t border-ink-800/70 hover:bg-ink-850/50 ${
+        checked ? "bg-audible-500/5" : ""
+      }`}
+    >
+      <td className="w-10 px-3 py-2" onClick={(e) => e.stopPropagation()}>
+        <input type="checkbox" aria-label={`Select ${b.title}`} checked={checked} onChange={onCheck} />
+      </td>
+      <td className="px-4 py-2">
+        <div className="flex items-center gap-3">
+          {b.cover_url && <img src={b.cover_url} alt="" className="h-10 w-10 rounded object-cover" />}
+          <div className="min-w-0">
+            <div className="truncate text-slate-100">{b.title}</div>
+            {b.series && (
+              <div className="truncate text-xs text-slate-500">
+                {b.series} {b.series_sequence && `#${b.series_sequence}`}
+              </div>
+            )}
+          </div>
+        </div>
+      </td>
+      <td className="hidden px-4 py-2 text-slate-400 md:table-cell">{b.authors}</td>
+      <td className="px-4 py-2">
+        {b.account_label && (
+          <AccountBadge label={b.account_label} color={b.account_badge_color || undefined} />
+        )}
+      </td>
+      <td className="px-4 py-2">
+        {b.excluded ? (
+          <StatusPill status="excluded" />
+        ) : b.job_state ? (
+          <div className="flex items-center gap-2">
+            <StatusPill status={b.job_state} />
+            {b.job_progress != null && b.job_progress > 0 && b.job_progress < 100 && (
+              <span className="text-xs text-slate-500">{Math.round(b.job_progress)}%</span>
+            )}
+          </div>
+        ) : (
+          <StatusPill status="pending" />
+        )}
+      </td>
+      <td className="px-4 py-2" onClick={(e) => e.stopPropagation()}>
+        <div className="flex justify-end gap-2">
+          <button className="btn-ghost !px-2 !py-1 text-xs" onClick={onExclude}>
+            {b.excluded ? "Include" : "Exclude"}
+          </button>
+          {!b.excluded && (
+            <button className="btn-primary !px-2 !py-1 text-xs" onClick={onDownload}>
+              Download
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+export default function Library() {
+  const qc = useQueryClient();
+  const [search, setSearch] = useState("");
+  const [accountId, setAccountId] = useState<number | undefined>(undefined);
+  const [selected, setSelected] = useState<Book | null>(null);
+  const [checked, setChecked] = useState<Set<number>>(new Set());
+  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [groupBySeries, setGroupBySeries] = useState(false);
+  const { data: accounts } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
+  const { data: books, isLoading } = useQuery({
+    queryKey: ["library", accountId, search],
+    queryFn: () => api.library({ account_id: accountId, search: search || undefined }),
+  });
+
+  const refresh = () => qc.invalidateQueries({ queryKey: ["library"] });
+  const clearSel = () => setChecked(new Set());
+  const toggleExclude = (b: Book) => api.setExcluded(b.id, !b.excluded).then(refresh);
+  const download = (b: Book) => api.download(b.id).then(refresh);
+
+  const toggleCheck = (id: number) =>
+    setChecked((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  const filtered = (books || []).filter((b) => !statusFilter || bookStatus(b) === statusFilter);
+
+  // Group by series (Standalone bucket for series-less titles), sorted by sequence.
+  const groups: { name: string; books: Book[] }[] = (() => {
+    if (!groupBySeries) return [{ name: "", books: filtered }];
+    const map = new Map<string, Book[]>();
+    for (const b of filtered) {
+      const key = b.series || "Standalone";
+      (map.get(key) || map.set(key, []).get(key)!).push(b);
+    }
+    return [...map.entries()]
+      .sort((a, b) => (a[0] === "Standalone" ? 1 : b[0] === "Standalone" ? -1 : a[0].localeCompare(b[0])))
+      .map(([name, list]) => ({
+        name,
+        books: list.sort(
+          (x, y) => Number(x.series_sequence || 0) - Number(y.series_sequence || 0)
+        ),
+      }));
+  })();
+
+  const allVisibleIds = filtered.map((b) => b.id);
+  const allChecked = allVisibleIds.length > 0 && allVisibleIds.every((id) => checked.has(id));
+  const toggleAll = () => setChecked(allChecked ? new Set() : new Set(allVisibleIds));
+
+  const bulkDownload = () =>
+    api.batchDownload([...checked]).then(() => {
+      clearSel();
+      refresh();
+    });
+  const bulkExclude = (excluded: boolean) =>
+    api.batchExclude([...checked], excluded).then(() => {
+      clearSel();
+      refresh();
+    });
+
+  // Keep the open modal in sync with refreshed data.
+  const selectedLive = selected ? books?.find((b) => b.id === selected.id) || selected : null;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold text-slate-100">Library</h1>
+          <p className="text-sm text-slate-500">All owned titles across linked accounts.</p>
+        </div>
+        <button className="btn-ghost" onClick={() => api.downloadAll().then(refresh)}>
+          Download all pending
+        </button>
+      </div>
+
+      {checked.size > 0 && (
+        <div className="card sticky top-16 z-[5] flex flex-wrap items-center gap-2 p-3">
+          <span className="text-sm text-slate-300">{checked.size} selected</span>
+          <div className="flex-1" />
+          <button className="btn-ghost !py-1 text-xs" onClick={clearSel}>
+            Clear
+          </button>
+          <button className="btn-ghost !py-1 text-xs" onClick={() => bulkExclude(true)}>
+            Exclude
+          </button>
+          <button className="btn-ghost !py-1 text-xs" onClick={() => bulkExclude(false)}>
+            Include
+          </button>
+          <button className="btn-primary !py-1 text-xs" onClick={bulkDownload}>
+            Download selected
+          </button>
+        </div>
+      )}
+
+      <div className="card flex flex-wrap gap-3 p-3">
+        <input
+          className="input min-w-[200px] flex-1"
+          placeholder="Search title, author, series…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <select
+          className="input w-full sm:w-40"
+          value={accountId ?? ""}
+          onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : undefined)}
+        >
+          <option value="">All accounts</option>
+          {(accounts || []).map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.label}
+            </option>
+          ))}
+        </select>
+        <select
+          className="input w-full sm:w-40"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+        >
+          <option value="">Any status</option>
+          <option value="downloaded">Downloaded</option>
+          <option value="pending">Pending</option>
+          <option value="in_progress">In progress</option>
+          <option value="failed">Failed</option>
+          <option value="excluded">Excluded</option>
+        </select>
+        <label className="flex select-none items-center gap-2 whitespace-nowrap text-sm text-slate-400">
+          <input
+            type="checkbox"
+            checked={groupBySeries}
+            onChange={(e) => setGroupBySeries(e.target.checked)}
+          />
+          Group by series
+        </label>
+      </div>
+
+      {isLoading ? (
+        <Spinner />
+      ) : filtered.length === 0 ? (
+        <Empty>
+          {(books || []).length === 0
+            ? "No books found. Link an account and run a sync."
+            : "No titles match the current filters."}
+        </Empty>
+      ) : (
+        <div className="card overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
+            <thead className="bg-ink-850 text-slate-400">
+              <tr>
+                <th className="w-10 px-3 py-2">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all"
+                    checked={allChecked}
+                    onChange={toggleAll}
+                  />
+                </th>
+                <th className="px-4 py-2 text-left font-medium">Title</th>
+                <th className="hidden px-4 py-2 text-left font-medium md:table-cell">Author</th>
+                <th className="px-4 py-2 text-left font-medium">Account</th>
+                <th className="px-4 py-2 text-left font-medium">Status</th>
+                <th className="px-4 py-2 text-right font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groups.map((g) => (
+                <Fragment key={g.name || "all"}>
+                  {groupBySeries && (
+                    <tr className="border-t border-ink-800 bg-ink-850/60">
+                      <td colSpan={6} className="px-4 py-1.5 text-xs font-semibold text-audible-400">
+                        {g.name}{" "}
+                        <span className="font-normal text-slate-500">({g.books.length})</span>
+                      </td>
+                    </tr>
+                  )}
+                  {g.books.map((b) => (
+                    <BookRow
+                      key={b.id}
+                      b={b}
+                      checked={checked.has(b.id)}
+                      onCheck={() => toggleCheck(b.id)}
+                      onOpen={() => setSelected(b)}
+                      onExclude={() => toggleExclude(b)}
+                      onDownload={() => download(b)}
+                    />
+                  ))}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {selectedLive && (
+        <BookModal
+          book={selectedLive}
+          onClose={() => setSelected(null)}
+          onExclude={(b) => toggleExclude(b)}
+          onDownload={(b) => download(b)}
+        />
+      )}
+    </div>
+  );
+}
