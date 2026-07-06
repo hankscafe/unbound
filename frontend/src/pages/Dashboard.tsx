@@ -1,23 +1,7 @@
-import { useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
+import { useLiveEvents } from "../hooks";
 import { Spinner, StatCard } from "../components/ui";
-
-function useLiveEvents() {
-  const qc = useQueryClient();
-  useEffect(() => {
-    const es = new EventSource("/api/events/stream", { withCredentials: true } as any);
-    const invalidate = () => {
-      qc.invalidateQueries({ queryKey: ["stats"] });
-      qc.invalidateQueries({ queryKey: ["jobs"] });
-      qc.invalidateQueries({ queryKey: ["library"] });
-      qc.invalidateQueries({ queryKey: ["accounts"] });
-    };
-    es.addEventListener("update", invalidate);
-    es.onerror = () => {}; // browser auto-reconnects
-    return () => es.close();
-  }, [qc]);
-}
 
 function fmtBytes(n: number | null): string {
   if (!n && n !== 0) return "—";
@@ -108,18 +92,14 @@ export default function Dashboard() {
 
       <div className="card p-4">
         <h2 className="text-sm font-semibold text-slate-300 mb-3">Recent activity</h2>
-        <div className="space-y-1.5 max-h-80 overflow-auto">
+        <div className="max-h-80 space-y-1.5 overflow-y-auto overflow-x-hidden">
           {(events || []).length === 0 && <div className="text-sm text-slate-500">No activity yet.</div>}
           {(events || []).map((e) => (
-            <div key={e.id} className="flex items-center gap-3 text-sm">
-              <span className="text-xs text-slate-600 w-40 shrink-0">
+            <div key={e.id} className="flex min-w-0 items-baseline gap-2 text-xs">
+              <span className="w-28 shrink-0 tabular-nums text-slate-600 sm:w-36">
                 {new Date(e.ts).toLocaleString()}
               </span>
-              <span
-                className={
-                  e.level === "error" ? "text-red-400" : "text-slate-300"
-                }
-              >
+              <span className={`min-w-0 break-words ${e.level === "error" ? "text-red-400" : "text-slate-300"}`}>
                 {e.message}
               </span>
             </div>

@@ -163,7 +163,7 @@ def test_download_resume_appends(monkeypatch, tmp_path):
 def test_storage_detects_unc_path():
     from app.services.storage import _looks_like_unc_or_windows
 
-    assert _looks_like_unc_or_windows(r"\\192.168.2.100\Media\audiobooks") is True
+    assert _looks_like_unc_or_windows(r"\\fileserver\Media\audiobooks") is True
     assert _looks_like_unc_or_windows(r"C:\Users\me\books") is True
     assert _looks_like_unc_or_windows("/data/library") is False
     assert _looks_like_unc_or_windows("data/library") is False
@@ -175,7 +175,7 @@ def test_path_problem_accepts_absolute_rejects_unc(monkeypatch):
     # Simulate the Linux container (a UNC path is valid/absolute on a Windows host).
     monkeypatch.setattr(storage.os, "name", "posix")
     assert storage.path_problem("/data/library/audiobooks") is None
-    assert storage.path_problem(r"\\192.168.2.100\Media\audiobooks") is not None
+    assert storage.path_problem(r"\\fileserver\Media\audiobooks") is not None
     assert storage.path_problem("relative/path") is not None
     assert storage.path_problem("") is not None
 

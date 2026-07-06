@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+from collections import defaultdict
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -16,16 +18,13 @@ from app.core.security import (
     verify_password,
 )
 from app.db import init_db
-from app.db.models import EventLog, User, UserRole
+from app.db.models import EventLog, User
 from app.schemas import LoginRequest, SetupRequest, StatusOut, UserOut
 
 router = APIRouter(tags=["auth"])
 settings = get_settings()
 
 # --- Simple in-memory login rate limiting (per client IP) ---
-import time as _time
-from collections import defaultdict
-
 _LOGIN_ATTEMPTS: dict[str, list[float]] = defaultdict(list)
 _MAX_ATTEMPTS = 8
 _WINDOW_SECONDS = 300  # 5 minutes
@@ -33,7 +32,7 @@ _WINDOW_SECONDS = 300  # 5 minutes
 
 def _rate_limit_login(request: Request) -> None:
     ip = request.client.host if request.client else "unknown"
-    now = _time.time()
+    now = time.time()
     recent = [t for t in _LOGIN_ATTEMPTS[ip] if now - t < _WINDOW_SECONDS]
     _LOGIN_ATTEMPTS[ip] = recent
     if len(recent) >= _MAX_ATTEMPTS:
@@ -45,7 +44,7 @@ def _rate_limit_login(request: Request) -> None:
 
 def _record_login_attempt(request: Request) -> None:
     ip = request.client.host if request.client else "unknown"
-    _LOGIN_ATTEMPTS[ip].append(_time.time())
+    _LOGIN_ATTEMPTS[ip].append(time.time())
 
 
 def _set_session_cookie(response: Response, user_id: int) -> None:

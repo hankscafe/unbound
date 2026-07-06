@@ -11,7 +11,7 @@ from __future__ import annotations
 import threading
 import time
 
-from sqlmodel import Session, col, select
+from sqlmodel import Session, select
 
 from app.core.logging import get_logger
 from app.db import init_db

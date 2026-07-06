@@ -1,7 +1,10 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Book, api } from "../api";
+import { useLiveEvents } from "../hooks";
 import { AccountBadge, Empty, Spinner, StatusPill } from "../components/ui";
+
+const PAGE_SIZE = 25;
 
 function fmtRuntime(min: number | null): string {
   if (!min) return "—";
@@ -24,7 +27,7 @@ function BookModal({
   return (
     <div className="fixed inset-0 z-20 grid place-items-center bg-black/60 px-4 py-8" onClick={onClose}>
       <div
-        className="card max-h-full w-full max-w-lg overflow-y-auto p-5"
+        className="card max-h-full w-full max-w-2xl overflow-y-auto p-5"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3">
@@ -78,23 +81,23 @@ function BookModal({
           </p>
         )}
 
-        <div className="mt-4 flex flex-wrap gap-2">
+        <div className="mt-4 flex items-center gap-2 overflow-x-auto">
           {book.audible_url && (
-            <a className="btn-ghost" href={book.audible_url} target="_blank" rel="noreferrer">
-              View on Audible ↗
+            <a className="btn-ghost whitespace-nowrap" href={book.audible_url} target="_blank" rel="noreferrer">
+              Audible ↗
             </a>
           )}
           {book.abs_url && (
-            <a className="btn-ghost" href={book.abs_url} target="_blank" rel="noreferrer">
-              Open in AudiobookShelf ↗
+            <a className="btn-ghost whitespace-nowrap" href={book.abs_url} target="_blank" rel="noreferrer">
+              AudiobookShelf ↗
             </a>
           )}
           <div className="flex-1" />
-          <button className="btn-ghost" onClick={() => onExclude(book)}>
+          <button className="btn-ghost whitespace-nowrap" onClick={() => onExclude(book)}>
             {book.excluded ? "Include" : "Exclude"}
           </button>
           {!book.excluded && (
-            <button className="btn-primary" onClick={() => onDownload(book)}>
+            <button className="btn-primary whitespace-nowrap" onClick={() => onDownload(book)}>
               Download
             </button>
           )}
@@ -199,6 +202,7 @@ function BookRow({
 }
 
 export default function Library() {
+  useLiveEvents(); // live job/status updates on this page
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [accountId, setAccountId] = useState<number | undefined>(undefined);
@@ -206,6 +210,7 @@ export default function Library() {
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [groupBySeries, setGroupBySeries] = useState(false);
+  const [page, setPage] = useState(0);
   const { data: accounts } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
   const { data: books, isLoading } = useQuery({
     queryKey: ["library", accountId, search],
@@ -225,9 +230,19 @@ export default function Library() {
     });
   const filtered = (books || []).filter((b) => !statusFilter || bookStatus(b) === statusFilter);
 
+  // Reset to the first page when the filters/grouping change.
+  useEffect(() => setPage(0), [search, accountId, statusFilter, groupBySeries]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const clampedPage = Math.min(page, pageCount - 1);
+  // Pagination applies to the flat list; grouped view shows everything grouped.
+  const pageItems = groupBySeries
+    ? filtered
+    : filtered.slice(clampedPage * PAGE_SIZE, (clampedPage + 1) * PAGE_SIZE);
+
   // Group by series (Standalone bucket for series-less titles), sorted by sequence.
   const groups: { name: string; books: Book[] }[] = (() => {
-    if (!groupBySeries) return [{ name: "", books: filtered }];
+    if (!groupBySeries) return [{ name: "", books: pageItems }];
     const map = new Map<string, Book[]>();
     for (const b of filtered) {
       const key = b.series || "Standalone";
@@ -243,7 +258,7 @@ export default function Library() {
       }));
   })();
 
-  const allVisibleIds = filtered.map((b) => b.id);
+  const allVisibleIds = pageItems.map((b) => b.id);
   const allChecked = allVisibleIds.length > 0 && allVisibleIds.every((id) => checked.has(id));
   const toggleAll = () => setChecked(allChecked ? new Set() : new Set(allVisibleIds));
 
@@ -387,6 +402,34 @@ export default function Library() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {!groupBySeries && filtered.length > PAGE_SIZE && (
+        <div className="flex items-center justify-between text-sm text-slate-400">
+          <span>
+            {clampedPage * PAGE_SIZE + 1}–{Math.min((clampedPage + 1) * PAGE_SIZE, filtered.length)} of{" "}
+            {filtered.length}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              className="btn-ghost !py-1 text-xs"
+              disabled={clampedPage === 0}
+              onClick={() => setPage(clampedPage - 1)}
+            >
+              Prev
+            </button>
+            <span className="text-xs text-slate-500">
+              Page {clampedPage + 1} / {pageCount}
+            </span>
+            <button
+              className="btn-ghost !py-1 text-xs"
+              disabled={clampedPage >= pageCount - 1}
+              onClick={() => setPage(clampedPage + 1)}
+            >
+              Next
+            </button>
+          </div>
         </div>
       )}
 

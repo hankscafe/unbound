@@ -185,6 +185,7 @@ export const api = {
     if (params.account_id != null) q.set("account_id", String(params.account_id));
     if (params.excluded != null) q.set("excluded", String(params.excluded));
     if (params.search) q.set("search", params.search);
+    q.set("limit", "1000"); // load full library; pagination is applied client-side
     return req<Book[]>(`/library?${q.toString()}`);
   },
   setExcluded: (bookId: number, excluded: boolean) =>
