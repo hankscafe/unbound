@@ -14,6 +14,19 @@ export interface User {
   username: string;
   email: string | null;
   role: string;
+  totp_enabled: boolean;
+}
+
+export interface LoginResult {
+  mfa_required: boolean;
+  mfa_token: string | null;
+  user: User | null;
+}
+
+export interface TwoFASetup {
+  secret: string;
+  otpauth_uri: string;
+  qr: string;
 }
 
 export interface Account {
@@ -153,9 +166,16 @@ export const api = {
   setup: (d: { username: string; password: string; email?: string; consent: boolean }) =>
     req<User>("/auth/setup", { method: "POST", ...body(d) }),
   login: (d: { username: string; password: string }) =>
-    req<User>("/auth/login", { method: "POST", ...body(d) }),
+    req<LoginResult>("/auth/login", { method: "POST", ...body(d) }),
+  login2fa: (mfa_token: string, code: string) =>
+    req<LoginResult>("/auth/login/2fa", { method: "POST", ...body({ mfa_token, code }) }),
   logout: () => req<void>("/auth/logout", { method: "POST" }),
   me: () => req<User>("/auth/me"),
+  twofaSetup: () => req<TwoFASetup>("/auth/2fa/setup", { method: "POST" }),
+  twofaEnable: (code: string) =>
+    req<{ recovery_codes: string[] }>("/auth/2fa/enable", { method: "POST", ...body({ code }) }),
+  twofaDisable: (code: string) =>
+    req<void>("/auth/2fa/disable", { method: "POST", ...body({ code }) }),
 
   stats: () => req<Stats>("/stats"),
   covers: () => req<{ covers: string[] }>("/covers"),

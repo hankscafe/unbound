@@ -72,6 +72,10 @@ class User(SQLModel, table=True):
     is_active: bool = True
     created_at: datetime = Field(default_factory=_utcnow)
     last_login_at: datetime | None = None
+    # TOTP 2FA. Secret is AES-GCM encrypted at rest; recovery codes stored as sha256 hashes.
+    totp_secret: str | None = Field(default=None, sa_column=Column(Text))
+    totp_enabled: bool = False
+    totp_recovery_codes: str | None = Field(default=None, sa_column=Column(Text))
 
 
 class AudibleAccount(SQLModel, table=True):

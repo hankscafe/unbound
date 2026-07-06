@@ -1,6 +1,6 @@
 [project]
 name = "unbound-backend"
-version = "0.3.0"
+version = "0.4.0"
 description = "Unbound — self-hosted Audible library manager (Libation-style), REST API + web UI"
 requires-python = ">=3.11,<3.13"
 license = { text = "AGPL-3.0-or-later" }
@@ -20,6 +20,8 @@ dependencies = [
     "audible>=0.10.0",
     "mutagen>=1.47",
     "apprise>=1.8",
+    "pyotp>=2.9",
+    "qrcode>=7.4",
 ]
 
 [project.optional-dependencies]

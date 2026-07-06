@@ -26,6 +26,34 @@ class UserOut(BaseModel):
     username: str
     email: str | None
     role: str
+    totp_enabled: bool = False
+
+
+class LoginResult(BaseModel):
+    """Login outcome: either signed in, or a 2FA code is required."""
+
+    mfa_required: bool = False
+    mfa_token: str | None = None  # short-lived, exchanged with the TOTP code
+    user: UserOut | None = None
+
+
+class Login2FARequest(BaseModel):
+    mfa_token: str
+    code: str  # TOTP code or a recovery code
+
+
+class TwoFASetupOut(BaseModel):
+    secret: str  # base32, for manual entry
+    otpauth_uri: str
+    qr: str  # data: URI PNG
+
+
+class TwoFACodeRequest(BaseModel):
+    code: str
+
+
+class TwoFAEnableOut(BaseModel):
+    recovery_codes: list[str]  # shown once
 
 
 class StatusOut(BaseModel):

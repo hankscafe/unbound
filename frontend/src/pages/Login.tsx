@@ -28,18 +28,38 @@ function CoverBackdrop() {
 export default function Login({ onDone }: { onDone: () => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const submit = async (e: React.FormEvent) => {
+  const submitPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setBusy(true);
     try {
-      await api.login({ username, password });
-      onDone();
+      const res = await api.login({ username, password });
+      if (res.mfa_required && res.mfa_token) {
+        setMfaToken(res.mfa_token); // move to the code step
+      } else {
+        onDone();
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Login failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      await api.login2fa(mfaToken!, code.trim());
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Verification failed");
     } finally {
       setBusy(false);
     }
@@ -52,21 +72,57 @@ export default function Login({ onDone }: { onDone: () => void }) {
         <div className="mb-6 flex justify-center">
           <Logo size={36} />
         </div>
-        <form onSubmit={submit} className="card space-y-4 p-6 shadow-2xl">
-          <h1 className="text-lg font-semibold text-slate-100">Sign in</h1>
-          <div>
-            <label className="label">Username</label>
-            <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus required />
-          </div>
-          <div>
-            <label className="label">Password</label>
-            <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-          </div>
-          {error && <div className="text-sm text-red-400">{error}</div>}
-          <button className="btn-primary w-full" disabled={busy}>
-            {busy ? "Signing in…" : "Sign in"}
-          </button>
-        </form>
+        {mfaToken ? (
+          <form onSubmit={submitCode} className="card space-y-4 p-6 shadow-2xl">
+            <h1 className="text-lg font-semibold text-slate-100">Two-factor authentication</h1>
+            <p className="text-sm text-slate-400">
+              Enter the 6-digit code from your authenticator app, or a recovery code.
+            </p>
+            <div>
+              <label className="label">Code</label>
+              <input
+                className="input tracking-widest"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                autoFocus
+                autoComplete="one-time-code"
+                inputMode="numeric"
+                required
+              />
+            </div>
+            {error && <div className="text-sm text-red-400">{error}</div>}
+            <button className="btn-primary w-full" disabled={busy}>
+              {busy ? "Verifying…" : "Verify"}
+            </button>
+            <button
+              type="button"
+              className="w-full text-xs text-slate-500 hover:text-slate-300"
+              onClick={() => {
+                setMfaToken(null);
+                setCode("");
+                setError(null);
+              }}
+            >
+              ← Back
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={submitPassword} className="card space-y-4 p-6 shadow-2xl">
+            <h1 className="text-lg font-semibold text-slate-100">Sign in</h1>
+            <div>
+              <label className="label">Username</label>
+              <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus required />
+            </div>
+            <div>
+              <label className="label">Password</label>
+              <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            </div>
+            {error && <div className="text-sm text-red-400">{error}</div>}
+            <button className="btn-primary w-full" disabled={busy}>
+              {busy ? "Signing in…" : "Sign in"}
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );

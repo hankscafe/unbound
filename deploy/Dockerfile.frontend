@@ -1,8 +1,12 @@
 # Build the SPA, then serve it via nginx which also reverse-proxies /api to the backend.
-FROM node:20-alpine AS build
+# Debian (glibc) base + a clean `npm install` (no lockfile in the build): both `npm ci`
+# and lockfile-driven installs trip the npm optional-dependency bug for rollup's native
+# binary (npm/cli#4828, "Exit handler never called"). A fresh resolve installs the
+# correct platform binary reliably.
+FROM node:20-slim AS build
 WORKDIR /app
-COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm install
+COPY frontend/package.json ./
+RUN npm install --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 

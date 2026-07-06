@@ -107,6 +107,25 @@ def decode_session_token(token: str, *, session_secret: str) -> dict:
     return jwt.decode(token, session_secret, algorithms=[_ALG])
 
 
+def create_mfa_token(*, subject: str, session_secret: str, ttl_seconds: int = 300) -> str:
+    """Short-lived token proving password step passed, pending a 2FA code."""
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": subject,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(seconds=ttl_seconds)).timestamp()),
+        "typ": "mfa",
+    }
+    return jwt.encode(payload, session_secret, algorithm=_ALG)
+
+
+def decode_mfa_token(token: str, *, session_secret: str) -> dict:
+    payload = jwt.decode(token, session_secret, algorithms=[_ALG])
+    if payload.get("typ") != "mfa":
+        raise ValueError("Not an MFA token")
+    return payload
+
+
 def generate_api_key() -> str:
     """A read-only API key for widget consumers (Homepage). Prefixed for clarity."""
     return "unb_" + base64.urlsafe_b64encode(os.urandom(24)).decode("ascii").rstrip("=")

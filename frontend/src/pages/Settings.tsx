@@ -1,9 +1,119 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, Integrations, LibraryProfile } from "../api";
+import { api, Integrations, LibraryProfile, TwoFASetup } from "../api";
 import { Spinner } from "../components/ui";
 
 const H2 = "text-sm font-semibold uppercase tracking-wide text-slate-300";
+
+// --- Security (2FA) --------------------------------------------------------
+
+function SecuritySection() {
+  const qc = useQueryClient();
+  const { data: me, isLoading } = useQuery({ queryKey: ["me"], queryFn: api.me });
+  const [setup, setSetup] = useState<TwoFASetup | null>(null);
+  const [code, setCode] = useState("");
+  const [recovery, setRecovery] = useState<string[] | null>(null);
+  const [disableCode, setDisableCode] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const refresh = () => qc.invalidateQueries({ queryKey: ["me"] });
+
+  if (isLoading || !me) return <Spinner />;
+
+  const wrap = async (fn: () => Promise<void>) => {
+    setErr(null);
+    try {
+      await fn();
+    } catch (e: any) {
+      setErr(e?.message || "Something went wrong");
+    }
+  };
+
+  return (
+    <section className="space-y-3">
+      <h2 className={H2}>Two-factor authentication</h2>
+
+      {me.totp_enabled ? (
+        <div className="card space-y-3 p-4">
+          <div className="text-sm text-emerald-400">✓ 2FA is enabled on your account.</div>
+          <p className="text-sm text-slate-500">
+            To turn it off, enter a current authenticator code or a recovery code.
+          </p>
+          <div className="flex items-end gap-2">
+            <div className="flex-1">
+              <label className="label">Code</label>
+              <input className="input" value={disableCode} onChange={(e) => setDisableCode(e.target.value)} />
+            </div>
+            <button
+              className="btn-danger"
+              onClick={() => wrap(async () => {
+                await api.twofaDisable(disableCode.trim());
+                setDisableCode("");
+                refresh();
+              })}
+            >
+              Disable 2FA
+            </button>
+          </div>
+        </div>
+      ) : recovery ? (
+        <div className="card space-y-3 p-4">
+          <div className="text-sm text-emerald-400">
+            ✓ 2FA enabled. Save these recovery codes somewhere safe — each works once if you lose your
+            authenticator.
+          </div>
+          <div className="grid grid-cols-2 gap-1 rounded-lg bg-ink-850 p-3 font-mono text-sm text-slate-200 sm:grid-cols-2">
+            {recovery.map((c) => (
+              <div key={c}>{c}</div>
+            ))}
+          </div>
+          <button className="btn-primary" onClick={() => setRecovery(null)}>
+            I’ve saved them
+          </button>
+        </div>
+      ) : setup ? (
+        <div className="card space-y-3 p-4">
+          <p className="text-sm text-slate-400">
+            Scan this QR in an authenticator app (Google Authenticator, Authy, 1Password…), or enter the
+            secret manually, then type the 6-digit code to confirm.
+          </p>
+          <img src={setup.qr} alt="2FA QR code" className="h-44 w-44 rounded bg-white p-2" />
+          <div className="text-xs text-slate-500">
+            Secret: <span className="select-all font-mono text-slate-300">{setup.secret}</span>
+          </div>
+          <div className="flex items-end gap-2">
+            <div className="flex-1">
+              <label className="label">6-digit code</label>
+              <input className="input tracking-widest" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
+            </div>
+            <button
+              className="btn-primary"
+              onClick={() => wrap(async () => {
+                const r = await api.twofaEnable(code.trim());
+                setRecovery(r.recovery_codes);
+                setSetup(null);
+                setCode("");
+                refresh();
+              })}
+            >
+              Confirm &amp; enable
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="card space-y-3 p-4">
+          <p className="text-sm text-slate-500">
+            Require a time-based one-time code (TOTP) at sign-in, in addition to your password.
+          </p>
+          <button className="btn-primary" onClick={() => wrap(async () => setSetup(await api.twofaSetup()))}>
+            Enable 2FA
+          </button>
+        </div>
+      )}
+
+      {err && <div className="text-sm text-red-400">{err}</div>}
+    </section>
+  );
+}
 
 // --- Integrations (automation / AudiobookShelf / notifications) ------------
 
@@ -379,6 +489,7 @@ const TABS = [
   { id: "abs", label: "AudiobookShelf" },
   { id: "notifications", label: "Notifications" },
   { id: "library", label: "Library profiles" },
+  { id: "security", label: "Security" },
   { id: "apikeys", label: "API keys" },
 ] as const;
 
@@ -409,6 +520,7 @@ export default function Settings() {
         <IntegrationsSection tab={tab} />
       )}
       {tab === "library" && <LibraryProfilesSection />}
+      {tab === "security" && <SecuritySection />}
       {tab === "apikeys" && <ApiKeysSection />}
     </div>
   );

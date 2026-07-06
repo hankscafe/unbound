@@ -45,6 +45,56 @@ def test_log_redaction():
     assert out["event"] == "login"
 
 
+def _exercise_2fa(client):
+    """Enroll TOTP, log in via 2FA and a recovery code, then disable it."""
+    import pyotp
+
+    r = client.post("/api/auth/2fa/setup")
+    assert r.status_code == 200, r.text
+    secret = r.json()["secret"]
+    assert r.json()["qr"].startswith("data:image/png;base64,")
+
+    # Enabling requires a valid current code.
+    assert client.post("/api/auth/2fa/enable", json={"code": "000000"}).status_code == 400
+    r = client.post("/api/auth/2fa/enable", json={"code": pyotp.TOTP(secret).now()})
+    assert r.status_code == 200, r.text
+    recovery = r.json()["recovery_codes"]
+    assert len(recovery) == 10
+    assert client.get("/api/auth/me").json()["totp_enabled"] is True
+
+    # Login now demands a second factor.
+    client.post("/api/auth/logout")
+    client.cookies.clear()
+    r = client.post("/api/auth/login", json={"username": "admin", "password": "supersecret1"})
+    assert r.json()["mfa_required"] is True and r.json()["user"] is None
+    token = r.json()["mfa_token"]
+    # Wrong code rejected; correct TOTP accepted.
+    assert client.post("/api/auth/login/2fa", json={"mfa_token": token, "code": "000000"}).status_code == 401
+    r = client.post("/api/auth/login/2fa", json={"mfa_token": token, "code": pyotp.TOTP(secret).now()})
+    assert r.status_code == 200 and r.json()["user"]["username"] == "admin"
+
+    # A recovery code also works (one-time).
+    client.post("/api/auth/logout")
+    client.cookies.clear()
+    token = client.post("/api/auth/login", json={"username": "admin", "password": "supersecret1"}).json()["mfa_token"]
+    assert client.post("/api/auth/login/2fa", json={"mfa_token": token, "code": recovery[0]}).status_code == 200
+    # The same recovery code cannot be reused.
+    client.post("/api/auth/logout")
+    client.cookies.clear()
+    token = client.post("/api/auth/login", json={"username": "admin", "password": "supersecret1"}).json()["mfa_token"]
+    assert client.post("/api/auth/login/2fa", json={"mfa_token": token, "code": recovery[0]}).status_code == 401
+    token = client.post("/api/auth/login", json={"username": "admin", "password": "supersecret1"}).json()["mfa_token"]
+    client.post("/api/auth/login/2fa", json={"mfa_token": token, "code": pyotp.TOTP(secret).now()})
+
+    # Disable restores single-factor login.
+    assert client.post("/api/auth/2fa/disable", json={"code": pyotp.TOTP(secret).now()}).status_code == 204
+    assert client.get("/api/auth/me").json()["totp_enabled"] is False
+    r = client.post("/api/auth/logout")
+    client.cookies.clear()
+    r = client.post("/api/auth/login", json={"username": "admin", "password": "supersecret1"})
+    assert r.json()["mfa_required"] is False and r.json()["user"]["username"] == "admin"
+
+
 def test_full_flow():
     with TestClient(app) as client:
         # Fresh install → setup required.
@@ -74,6 +124,8 @@ def test_full_flow():
         # Now authenticated.
         assert client.get("/api/auth/status").json()["setup_required"] is False
         assert client.get("/api/auth/me").json()["username"] == "admin"
+
+        _exercise_2fa(client)
 
         # Stats reflect an empty library.
         stats = client.get("/api/stats").json()

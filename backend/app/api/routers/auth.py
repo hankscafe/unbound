@@ -11,15 +11,31 @@ from sqlmodel import Session, select
 
 from app.api.deps import current_user, db_session
 from app.core.config import get_settings
+import json
+
+from app.core.runtime import get_secret_box
 from app.core.security import (
+    create_mfa_token,
     create_session_token,
+    decode_mfa_token,
     needs_rehash,
     hash_password,
     verify_password,
 )
 from app.db import init_db
 from app.db.models import EventLog, User
-from app.schemas import LoginRequest, SetupRequest, StatusOut, UserOut
+from app.schemas import (
+    Login2FARequest,
+    LoginRequest,
+    LoginResult,
+    SetupRequest,
+    StatusOut,
+    TwoFACodeRequest,
+    TwoFAEnableOut,
+    TwoFASetupOut,
+    UserOut,
+)
+from app.services import twofa
 
 router = APIRouter(tags=["auth"])
 settings = get_settings()
@@ -64,6 +80,25 @@ def _set_session_cookie(response: Response, user_id: int) -> None:
     )
 
 
+def _user_out(user: User) -> UserOut:
+    return UserOut(
+        id=user.id,  # type: ignore[arg-type]
+        username=user.username,
+        email=user.email,
+        role=user.role.value,
+        totp_enabled=user.totp_enabled,
+    )
+
+
+def _finalize_login(user: User, request: Request, response: Response, session: Session) -> UserOut:
+    user.last_login_at = datetime.now(timezone.utc)
+    session.add(user)
+    session.add(EventLog(category="auth", message=f"User '{user.username}' logged in"))
+    session.commit()
+    _set_session_cookie(response, user.id)  # type: ignore[arg-type]
+    return _user_out(user)
+
+
 @router.get("/status", response_model=StatusOut)
 def get_status(request: Request, session: Session = Depends(db_session)) -> StatusOut:
     from app import __version__
@@ -106,16 +141,16 @@ def setup(
     session.add(EventLog(category="auth", message=f"Admin account '{user.username}' created"))
     session.commit()
     _set_session_cookie(response, user.id)  # type: ignore[arg-type]
-    return UserOut(id=user.id, username=user.username, email=user.email, role=user.role.value)  # type: ignore[arg-type]
+    return _user_out(user)
 
 
-@router.post("/login", response_model=UserOut)
+@router.post("/login", response_model=LoginResult)
 def login(
     payload: LoginRequest,
     request: Request,
     response: Response,
     session: Session = Depends(db_session),
-) -> UserOut:
+) -> LoginResult:
     _rate_limit_login(request)
     user = session.exec(select(User).where(User.username == payload.username)).first()
     # Constant-ish work whether or not the user exists.
@@ -126,12 +161,59 @@ def login(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Account is disabled")
     if needs_rehash(user.password_hash):
         user.password_hash = hash_password(payload.password)
-    user.last_login_at = datetime.now(timezone.utc)
-    session.add(user)
-    session.add(EventLog(category="auth", message=f"User '{user.username}' logged in"))
-    session.commit()
-    _set_session_cookie(response, user.id)  # type: ignore[arg-type]
-    return UserOut(id=user.id, username=user.username, email=user.email, role=user.role.value)  # type: ignore[arg-type]
+        session.add(user)
+        session.commit()
+
+    if user.totp_enabled:
+        # Password OK, but a 2FA code is still required — issue a short-lived token.
+        token = create_mfa_token(
+            subject=str(user.id), session_secret=settings.resolve_session_secret()
+        )
+        return LoginResult(mfa_required=True, mfa_token=token)
+
+    return LoginResult(user=_finalize_login(user, request, response, session))
+
+
+@router.post("/login/2fa", response_model=LoginResult)
+def login_2fa(
+    payload: Login2FARequest,
+    request: Request,
+    response: Response,
+    session: Session = Depends(db_session),
+) -> LoginResult:
+    _rate_limit_login(request)
+    try:
+        claims = decode_mfa_token(payload.mfa_token, session_secret=settings.resolve_session_secret())
+    except Exception as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "2FA session expired — sign in again") from exc
+    user = session.get(User, int(claims["sub"]))
+    if user is None or not user.is_active or not user.totp_enabled:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid 2FA session")
+
+    if not _verify_second_factor(session, user, payload.code):
+        _record_login_attempt(request)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid authentication code")
+
+    return LoginResult(user=_finalize_login(user, request, response, session))
+
+
+def _verify_second_factor(session: Session, user: User, code: str) -> bool:
+    """Verify a TOTP code, or consume a one-time recovery code."""
+    secret = get_secret_box().decrypt_str(user.totp_secret) if user.totp_secret else None
+    if secret and twofa.verify_totp(secret, code):
+        return True
+    # Fall back to recovery codes.
+    hashes = json.loads(user.totp_recovery_codes) if user.totp_recovery_codes else []
+    h = twofa.hash_recovery_code(code)
+    if h in hashes:
+        hashes.remove(h)
+        user.totp_recovery_codes = json.dumps(hashes)
+        session.add(user)
+        session.add(EventLog(level="warning", category="auth",
+                             message=f"Recovery code used for '{user.username}' ({len(hashes)} left)"))
+        session.commit()
+        return True
+    return False
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -143,4 +225,67 @@ def logout(response: Response) -> Response:
 
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(current_user)) -> UserOut:
-    return UserOut(id=user.id, username=user.username, email=user.email, role=user.role.value)  # type: ignore[arg-type]
+    return _user_out(user)
+
+
+# --- Two-factor authentication (TOTP) --------------------------------------
+
+
+@router.post("/2fa/setup", response_model=TwoFASetupOut)
+def twofa_setup(
+    user: User = Depends(current_user), session: Session = Depends(db_session)
+) -> TwoFASetupOut:
+    """Begin enrollment: generate a secret (pending until verified) + QR."""
+    if user.totp_enabled:
+        raise HTTPException(status.HTTP_409_CONFLICT, "2FA is already enabled")
+    secret = twofa.generate_secret()
+    user.totp_secret = get_secret_box().encrypt(secret)  # stored pending, not yet enabled
+    session.add(user)
+    session.commit()
+    uri = twofa.otpauth_uri(secret, user.username)
+    return TwoFASetupOut(secret=secret, otpauth_uri=uri, qr=twofa.qr_data_uri(uri))
+
+
+@router.post("/2fa/enable", response_model=TwoFAEnableOut)
+def twofa_enable(
+    payload: TwoFACodeRequest,
+    user: User = Depends(current_user),
+    session: Session = Depends(db_session),
+) -> TwoFAEnableOut:
+    """Confirm the code from the authenticator app, then activate 2FA."""
+    if user.totp_enabled:
+        raise HTTPException(status.HTTP_409_CONFLICT, "2FA is already enabled")
+    if not user.totp_secret:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Start setup first")
+    secret = get_secret_box().decrypt_str(user.totp_secret)
+    if not twofa.verify_totp(secret, payload.code):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid authentication code")
+    codes = twofa.generate_recovery_codes()
+    user.totp_recovery_codes = json.dumps(twofa.hash_recovery_codes(codes))
+    user.totp_enabled = True
+    session.add(user)
+    session.add(EventLog(category="auth", message=f"2FA enabled for '{user.username}'"))
+    session.commit()
+    return TwoFAEnableOut(recovery_codes=codes)
+
+
+@router.post("/2fa/disable", status_code=status.HTTP_204_NO_CONTENT)
+def twofa_disable(
+    payload: TwoFACodeRequest,
+    response: Response,
+    user: User = Depends(current_user),
+    session: Session = Depends(db_session),
+) -> Response:
+    """Turn off 2FA after verifying a current code (or recovery code)."""
+    if not user.totp_enabled:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "2FA is not enabled")
+    if not _verify_second_factor(session, user, payload.code):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid authentication code")
+    user.totp_enabled = False
+    user.totp_secret = None
+    user.totp_recovery_codes = None
+    session.add(user)
+    session.add(EventLog(category="auth", message=f"2FA disabled for '{user.username}'"))
+    session.commit()
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
