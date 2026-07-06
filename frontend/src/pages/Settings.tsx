@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, Integrations, LibraryProfile, TwoFASetup } from "../api";
+import { api, Integrations, LibraryProfile, OIDCSettings, TwoFASetup } from "../api";
 import { Spinner } from "../components/ui";
 
 const H2 = "text-sm font-semibold uppercase tracking-wide text-slate-300";
@@ -111,6 +111,134 @@ function SecuritySection() {
       )}
 
       {err && <div className="text-sm text-red-400">{err}</div>}
+    </section>
+  );
+}
+
+// --- OIDC single sign-on ----------------------------------------------------
+
+function OIDCSection() {
+  const qc = useQueryClient();
+  const { data, isLoading } = useQuery({ queryKey: ["oidc"], queryFn: api.oidcSettings });
+  const [form, setForm] = useState<OIDCSettings | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => {
+    if (data) setForm(data);
+  }, [data]);
+
+  if (isLoading || !form) return <Spinner />;
+  const set = (patch: Partial<OIDCSettings>) => {
+    setForm({ ...form, ...patch });
+    setMsg(null);
+  };
+  const save = async () => {
+    try {
+      const saved = await api.updateOidcSettings(form);
+      qc.setQueryData(["oidc"], saved);
+      setForm(saved);
+      setMsg("Saved");
+    } catch (e: any) {
+      setMsg(e?.message || "Could not save");
+    }
+  };
+
+  return (
+    <section className="space-y-3">
+      <h2 className={H2}>Single sign-on (OIDC)</h2>
+      <div className="card space-y-3 p-4">
+        <p className="text-sm text-slate-500">
+          Sign in through an OpenID Connect provider (Authentik, Keycloak, Authelia, Google…). The
+          identity must match an existing Unbound user by email or username — accounts are never
+          created automatically. When SSO is used, your provider is responsible for MFA.
+        </p>
+        <label className="flex items-center gap-2 text-sm text-slate-300">
+          <input
+            type="checkbox"
+            checked={form.enabled}
+            onChange={(e) => set({ enabled: e.target.checked })}
+          />
+          Enable OIDC sign-on
+        </label>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="md:col-span-2">
+            <label className="label">Issuer URL</label>
+            <input
+              className="input"
+              placeholder="https://auth.example.com/application/o/unbound/"
+              value={form.issuer || ""}
+              onChange={(e) => set({ issuer: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="label">Client ID</label>
+            <input
+              className="input"
+              value={form.client_id || ""}
+              onChange={(e) => set({ client_id: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="label">
+              Client secret{" "}
+              {form.client_secret_set && (
+                <span className="text-emerald-400">(set — leave blank to keep)</span>
+              )}
+            </label>
+            <input
+              className="input font-mono text-xs"
+              type="password"
+              placeholder={form.client_secret_set ? "•••••••• (unchanged)" : "paste client secret"}
+              value={form.client_secret || ""}
+              onChange={(e) => set({ client_secret: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="label">Login button label (optional)</label>
+            <input
+              className="input"
+              placeholder="Single sign-on"
+              value={form.button_label || ""}
+              onChange={(e) => set({ button_label: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="label">Public URL of this Unbound instance</label>
+            <input
+              className="input"
+              placeholder="https://unbound.example.com"
+              value={form.public_base_url || ""}
+              onChange={(e) => set({ public_base_url: e.target.value })}
+            />
+          </div>
+        </div>
+        {form.redirect_uri && (
+          <div className="rounded-lg bg-ink-850 p-2 text-xs text-slate-400">
+            Register this redirect URI at your provider:{" "}
+            <code className="select-all break-all text-audible-400">{form.redirect_uri}</code>
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <button className="btn-primary" onClick={save}>
+            Save
+          </button>
+          <button
+            className="btn-ghost"
+            onClick={async () => {
+              try {
+                await api.updateOidcSettings(form);
+                qc.invalidateQueries({ queryKey: ["oidc"] });
+                const r = await api.testOidc();
+                setMsg(`Provider reachable — auth endpoint: ${r.authorization_endpoint}`);
+              } catch (e: any) {
+                setMsg(e?.message || "Test failed");
+              }
+            }}
+          >
+            Save &amp; test provider
+          </button>
+          {msg && <span className="text-sm text-slate-400">{msg}</span>}
+        </div>
+      </div>
     </section>
   );
 }
@@ -500,7 +628,7 @@ export default function Settings() {
   return (
     <div className="space-y-5">
       <h1 className="text-xl font-semibold text-slate-100">Settings</h1>
-      <div className="flex gap-1 overflow-x-auto border-b border-ink-800">
+      <div className="no-scrollbar flex gap-1 overflow-x-auto border-b border-ink-800">
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -520,7 +648,12 @@ export default function Settings() {
         <IntegrationsSection tab={tab} />
       )}
       {tab === "library" && <LibraryProfilesSection />}
-      {tab === "security" && <SecuritySection />}
+      {tab === "security" && (
+        <div className="space-y-6">
+          <SecuritySection />
+          <OIDCSection />
+        </div>
+      )}
       {tab === "apikeys" && <ApiKeysSection />}
     </div>
   );

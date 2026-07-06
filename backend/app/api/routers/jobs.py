@@ -24,12 +24,18 @@ def _to_out(session: Session, job: DownloadJob) -> JobOut:
         id=job.id,  # type: ignore[arg-type]
         book_id=job.book_id,
         book_title=book.title if book else None,
+        book_author=book.authors if book else None,
+        cover_url=book.cover_url if book else None,
         state=job.state.value,
         progress=job.progress,
+        bytes_done=job.bytes_done,
+        bytes_total=job.bytes_total,
         format=job.format,
         error_message=job.error_message,
         attempt_count=job.attempt_count,
+        created_at=job.created_at,
         updated_at=job.updated_at,
+        finished_at=job.finished_at,
     )
 
 

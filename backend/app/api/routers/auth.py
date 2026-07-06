@@ -7,6 +7,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import RedirectResponse
 from sqlmodel import Session, select
 
 from app.api.deps import current_user, db_session
@@ -35,7 +36,7 @@ from app.schemas import (
     TwoFASetupOut,
     UserOut,
 )
-from app.services import twofa
+from app.services import oidc, twofa
 
 router = APIRouter(tags=["auth"])
 settings = get_settings()
@@ -113,12 +114,15 @@ def get_status(request: Request, session: Session = Depends(db_session)) -> Stat
             authed = True
         except Exception:
             authed = False
+    oidc_on = oidc.is_enabled(session)
     return StatusOut(
         setup_required=init_db.setup_required(session),
         authenticated=authed,
         consent_acknowledged=init_db.get_setting(session, init_db.SETTING_CONSENT) == "true",
         secret_key_rotated=init_db.secret_key_rotated(session),
         version=__version__,
+        oidc_enabled=oidc_on,
+        oidc_button_label=oidc.button_label(session) if oidc_on else None,
     )
 
 
@@ -226,6 +230,79 @@ def logout(response: Response) -> Response:
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(current_user)) -> UserOut:
     return _user_out(user)
+
+
+# --- OIDC single sign-on -----------------------------------------------------
+
+
+def _oidc_redirect_uri(request: Request, config: oidc.OIDCConfig) -> str:
+    """The callback URL registered at the IdP. Prefer the configured public base
+    URL — behind the nginx proxy the request base points at the backend host."""
+    base = (config.public_base_url or str(request.base_url)).rstrip("/")
+    return f"{base}/api/auth/oidc/callback"
+
+
+@router.get("/oidc/login")
+def oidc_login(request: Request, session: Session = Depends(db_session)) -> RedirectResponse:
+    config = oidc.get_config(session)
+    if config is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "OIDC sign-on is not configured")
+    try:
+        url = oidc.start_flow(config, _oidc_redirect_uri(request, config))
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, f"Could not reach the identity provider: {exc}"
+        ) from exc
+    return RedirectResponse(url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+
+@router.get("/oidc/callback")
+def oidc_callback(
+    request: Request,
+    session: Session = Depends(db_session),
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+) -> RedirectResponse:
+    """IdP redirect target. On success sets the session cookie and lands on the app;
+    on failure lands on the login screen with an error message in the query string."""
+
+    def fail(message: str) -> RedirectResponse:
+        from urllib.parse import quote
+
+        return RedirectResponse(f"/?oidc_error={quote(message[:200])}")
+
+    config = oidc.get_config(session)
+    if config is None:
+        return fail("OIDC sign-on is not configured")
+    if error:
+        return fail(error_description or error)
+    if not code or not state:
+        return fail("The identity provider response was incomplete")
+    _rate_limit_login(request)
+    try:
+        claims = oidc.complete_flow(config, state, code, _oidc_redirect_uri(request, config))
+    except Exception as exc:
+        _record_login_attempt(request)
+        return fail(str(exc))
+    user = oidc.match_user(session, claims)
+    if user is None:
+        _record_login_attempt(request)
+        ident = claims.get("email") or claims.get("preferred_username") or claims.get("sub", "?")
+        session.add(EventLog(level="warning", category="auth",
+                             message=f"OIDC sign-in rejected: no local user matches '{ident}'"))
+        session.commit()
+        return fail("No Unbound user matches this identity")
+
+    # The IdP is the authority for MFA, so a local TOTP challenge is skipped here.
+    user.last_login_at = datetime.now(timezone.utc)
+    session.add(user)
+    session.add(EventLog(category="auth", message=f"User '{user.username}' logged in via OIDC"))
+    session.commit()
+    response = RedirectResponse("/")
+    _set_session_cookie(response, user.id)  # type: ignore[arg-type]
+    return response
 
 
 # --- Two-factor authentication (TOTP) --------------------------------------

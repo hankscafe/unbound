@@ -18,6 +18,9 @@ UI. A modern, container-native take on [Libation](https://github.com/rmcrackan/L
 
 - 🔐 **Secured** — first-run admin setup, login page, Argon2 password hashing, HttpOnly/Secure
   session cookies, login rate-limiting, CSP + security headers.
+- 🛡️ **Two-factor authentication (TOTP)** — authenticator-app codes + one-time recovery codes.
+- 🎟️ **Single sign-on (OIDC)** — sign in through Authentik, Keycloak, Authelia, Google, or any
+  OpenID Connect provider (authorization code + PKCE).
 - 🔗 **Multiple Audible accounts** — link several at once; each gets its own colored badge.
 - 🧭 **Two linking flows** — guided in-app (email + password, with OTP/CAPTCHA prompts) *or*
   external-browser (log in on Amazon, paste the response URL).

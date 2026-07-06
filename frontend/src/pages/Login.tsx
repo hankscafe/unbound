@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "../api";
 import { Logo } from "../components/ui";
 
@@ -32,6 +33,16 @@ export default function Login({ onDone }: { onDone: () => void }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const { data: status } = useQuery({ queryKey: ["status"], queryFn: api.status });
+
+  // Failed OIDC callbacks land back here with the reason in the query string.
+  useEffect(() => {
+    const oidcError = new URLSearchParams(window.location.search).get("oidc_error");
+    if (oidcError) {
+      setError(oidcError);
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, []);
 
   const submitPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -121,6 +132,18 @@ export default function Login({ onDone }: { onDone: () => void }) {
             <button className="btn-primary w-full" disabled={busy}>
               {busy ? "Signing in…" : "Sign in"}
             </button>
+            {status?.oidc_enabled && (
+              <>
+                <div className="flex items-center gap-3 text-xs text-slate-600">
+                  <div className="h-px flex-1 bg-ink-700" />
+                  or
+                  <div className="h-px flex-1 bg-ink-700" />
+                </div>
+                <a className="btn-ghost w-full" href="/api/auth/oidc/login">
+                  {status.oidc_button_label || "Single sign-on"}
+                </a>
+              </>
+            )}
           </form>
         )}
       </div>

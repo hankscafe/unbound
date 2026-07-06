@@ -56,7 +56,7 @@ function Shell({ children, onLogout }: { children: React.ReactNode; onLogout: ()
             </button>
           </div>
           {/* Mobile: horizontally scrollable nav row */}
-          <nav className="-mx-1 flex gap-1 overflow-x-auto pb-2 sm:hidden">
+          <nav className="no-scrollbar -mx-1 flex gap-1 overflow-x-auto pb-2 sm:hidden">
             <NavLinks />
           </nav>
         </div>

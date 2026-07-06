@@ -12,6 +12,7 @@ from app.core.security import generate_api_key
 from app.db import init_db
 from app.services import audiobookshelf as abs_svc
 from app.services import notifier
+from app.services import oidc
 from app.services.storage import path_problem
 from app.db.models import ApiKey, AudioFormat, EventLog, LibraryProfile
 from app.schemas import (
@@ -21,6 +22,7 @@ from app.schemas import (
     IntegrationsSettings,
     LibraryProfileIn,
     LibraryProfileOut,
+    OIDCSettings,
 )
 
 router = APIRouter(tags=["settings"], dependencies=[Depends(require_admin)])
@@ -243,6 +245,66 @@ def test_notification(session: Session = Depends(db_session)) -> dict:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No notification URLs configured")
     notifier.send("Unbound: test notification", "If you can read this, notifications work. 🎧")
     return {"sent_to": len(urls)}
+
+
+# --- OIDC single sign-on -----------------------------------------------------
+
+
+def _oidc_out(session: Session) -> OIDCSettings:
+    base = init_db.get_setting(session, oidc.SETTING_OIDC_PUBLIC_BASE_URL)
+    return OIDCSettings(
+        enabled=init_db.get_bool(session, oidc.SETTING_OIDC_ENABLED),
+        issuer=init_db.get_setting(session, oidc.SETTING_OIDC_ISSUER),
+        client_id=init_db.get_setting(session, oidc.SETTING_OIDC_CLIENT_ID),
+        client_secret=None,  # never echoed back
+        client_secret_set=oidc.has_client_secret(session),
+        button_label=init_db.get_setting(session, oidc.SETTING_OIDC_BUTTON_LABEL),
+        public_base_url=base,
+        redirect_uri=f"{base.rstrip('/')}/api/auth/oidc/callback" if base else None,
+    )
+
+
+@router.get("/oidc", response_model=OIDCSettings)
+def get_oidc(session: Session = Depends(db_session)) -> OIDCSettings:
+    return _oidc_out(session)
+
+
+@router.put("/oidc", response_model=OIDCSettings)
+def update_oidc(payload: OIDCSettings, session: Session = Depends(db_session)) -> OIDCSettings:
+    if payload.enabled:
+        missing = not (payload.issuer or "").strip() or not (payload.client_id or "").strip()
+        no_secret = not (payload.client_secret or "").strip() and not oidc.has_client_secret(session)
+        if missing or no_secret:
+            raise HTTPException(422, "Enabling OIDC requires issuer, client ID, and client secret")
+    init_db.set_setting(session, oidc.SETTING_OIDC_ENABLED, str(payload.enabled).lower())
+    init_db.set_setting(
+        session, oidc.SETTING_OIDC_ISSUER, (payload.issuer or "").strip().rstrip("/") or None
+    )
+    init_db.set_setting(session, oidc.SETTING_OIDC_CLIENT_ID, (payload.client_id or "").strip() or None)
+    if payload.client_secret is not None and payload.client_secret.strip():
+        oidc.set_client_secret(session, payload.client_secret.strip())  # only replace when sent
+    init_db.set_setting(
+        session, oidc.SETTING_OIDC_BUTTON_LABEL, (payload.button_label or "").strip() or None
+    )
+    init_db.set_setting(
+        session, oidc.SETTING_OIDC_PUBLIC_BASE_URL, (payload.public_base_url or "").strip().rstrip("/") or None
+    )
+    session.add(EventLog(category="system", message="OIDC settings updated"))
+    session.commit()
+    return _oidc_out(session)
+
+
+@router.post("/oidc/test")
+def test_oidc(session: Session = Depends(db_session)) -> dict:
+    """Verify the issuer by fetching its discovery document."""
+    issuer = init_db.get_setting(session, oidc.SETTING_OIDC_ISSUER)
+    if not issuer:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Set the issuer URL first")
+    try:
+        doc = oidc.discover(issuer)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Discovery failed: {exc}")
+    return {"ok": True, "authorization_endpoint": doc["authorization_endpoint"]}
 
 
 # --- Activity feed ---------------------------------------------------------

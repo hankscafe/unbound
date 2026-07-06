@@ -81,6 +81,8 @@ def _emit(job: DownloadJob) -> None:
             "book_id": job.book_id,
             "state": job.state.value,
             "progress": round(job.progress, 1),
+            "bytes_done": job.bytes_done,
+            "bytes_total": job.bytes_total,
         }
     )
 
@@ -219,7 +221,16 @@ def download_book(job_id: int) -> None:
         try:
             auth = account_svc.load_authenticator(account)
 
+            # The downloader reports every 256KB chunk; persisting/broadcasting each
+            # one would hammer SQLite and the SSE stream, so throttle to ~1/second
+            # (always letting the final chunk through).
+            _last_emit = {"t": 0.0}
+
             def on_progress(done: int, total: int | None) -> None:
+                now = time.monotonic()
+                if total and done < total and now - _last_emit["t"] < 1.0:
+                    return
+                _last_emit["t"] = now
                 job.bytes_done = done
                 job.bytes_total = total
                 job.progress = (done / total * 100.0) if total else 0.0

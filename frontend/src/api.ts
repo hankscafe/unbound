@@ -7,6 +7,8 @@ export interface AppStatus {
   consent_acknowledged: boolean;
   secret_key_rotated: boolean;
   version: string;
+  oidc_enabled: boolean;
+  oidc_button_label: string | null;
 }
 
 export interface User {
@@ -82,12 +84,29 @@ export interface Job {
   id: number;
   book_id: number;
   book_title: string | null;
+  book_author: string | null;
+  cover_url: string | null;
   state: string;
   progress: number;
+  bytes_done: number | null;
+  bytes_total: number | null;
   format: string | null;
   error_message: string | null;
   attempt_count: number;
+  created_at: string;
   updated_at: string;
+  finished_at: string | null;
+}
+
+export interface OIDCSettings {
+  enabled: boolean;
+  issuer: string | null;
+  client_id: string | null;
+  client_secret: string | null;
+  client_secret_set: boolean;
+  button_label: string | null;
+  public_base_url: string | null;
+  redirect_uri: string | null;
 }
 
 export interface Stats {
@@ -238,6 +257,11 @@ export const api = {
     req<Integrations>("/settings/integrations", { method: "PUT", ...body(d) }),
   testNotification: () =>
     req<{ sent_to: number }>("/settings/integrations/test-notification", { method: "POST" }),
+  oidcSettings: () => req<OIDCSettings>("/settings/oidc"),
+  updateOidcSettings: (d: OIDCSettings) =>
+    req<OIDCSettings>("/settings/oidc", { method: "PUT", ...body(d) }),
+  testOidc: () =>
+    req<{ ok: boolean; authorization_endpoint: string }>("/settings/oidc/test", { method: "POST" }),
   testAudiobookshelf: () =>
     req<{ ok: boolean; libraries: { id: string; name: string; mediaType: string }[] }>(
       "/settings/integrations/test-audiobookshelf",

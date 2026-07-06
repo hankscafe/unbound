@@ -175,10 +175,22 @@ function BookRow({
         {b.excluded ? (
           <StatusPill status="excluded" />
         ) : b.job_state ? (
-          <div className="flex items-center gap-2">
-            <StatusPill status={b.job_state} />
-            {b.job_progress != null && b.job_progress > 0 && b.job_progress < 100 && (
-              <span className="text-xs text-slate-500">{Math.round(b.job_progress)}%</span>
+          <div>
+            <div className="flex items-center gap-2">
+              <StatusPill status={b.job_state} />
+              {b.job_progress != null && b.job_progress > 0 && b.job_progress < 100 && (
+                <span className="text-xs tabular-nums text-audible-400">
+                  {Math.round(b.job_progress)}%
+                </span>
+              )}
+            </div>
+            {b.job_state === "downloading" && (
+              <div className="mt-1 h-1 w-24 overflow-hidden rounded-full bg-ink-800">
+                <div
+                  className="h-full bg-audible-500 transition-all"
+                  style={{ width: `${Math.max(3, b.job_progress || 0)}%` }}
+                />
+              </div>
             )}
           </div>
         ) : (

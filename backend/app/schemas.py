@@ -62,6 +62,9 @@ class StatusOut(BaseModel):
     consent_acknowledged: bool
     secret_key_rotated: bool
     version: str
+    # OIDC single sign-on (drives the SSO button on the login screen)
+    oidc_enabled: bool = False
+    oidc_button_label: str | None = None
 
 
 # --- Audible accounts ------------------------------------------------------
@@ -163,12 +166,18 @@ class JobOut(BaseModel):
     id: int
     book_id: int
     book_title: str | None = None
+    book_author: str | None = None
+    cover_url: str | None = None
     state: str
     progress: float
+    bytes_done: int | None = None
+    bytes_total: int | None = None
     format: str | None
     error_message: str | None
     attempt_count: int
+    created_at: datetime
     updated_at: datetime
+    finished_at: datetime | None = None
 
 
 # --- Library profiles ------------------------------------------------------
@@ -232,6 +241,23 @@ class ApiKeyOut(BaseModel):
 
 class ApiKeyCreatedOut(ApiKeyOut):
     key: str  # shown once, on creation
+
+
+# --- OIDC single sign-on ----------------------------------------------------
+
+
+class OIDCSettings(BaseModel):
+    enabled: bool = False
+    issuer: str | None = None
+    client_id: str | None = None
+    # Client secret — write-only: send to set/replace; never echoed back.
+    client_secret: str | None = None
+    client_secret_set: bool = False  # read-only indicator that a secret is stored
+    button_label: str | None = None
+    # Public URL of this Unbound instance, used to build the redirect URI
+    # (behind the proxy the backend can't see the browser-facing origin).
+    public_base_url: str | None = None
+    redirect_uri: str | None = None  # read-only, computed — register this at the IdP
 
 
 # --- Integrations (scheduling + AudiobookShelf) ---------------------------
