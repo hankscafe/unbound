@@ -158,6 +158,7 @@ export const api = {
   me: () => req<User>("/auth/me"),
 
   stats: () => req<Stats>("/stats"),
+  covers: () => req<{ covers: string[] }>("/covers"),
   recentEvents: () => req<any[]>("/settings/events"),
 
   accounts: () => req<Account[]>("/accounts"),

@@ -1,76 +1,122 @@
 # Unbound
 
-**Unbound** is a self-hosted, UI-first Audible library manager — a modern take on
-[Libation](https://github.com/rmcrackan/Libation). It makes it easy to **connect your own
-Audible account(s), back up and decrypt the audiobooks you've purchased, and organize them
-into a tidy library** — all from a secured dark web UI, with a REST API for dashboards.
+**Self-hosted, UI-first Audible library manager** — connect your Audible account(s), back up and
+decrypt the audiobooks you own, and organize them into a clean library, all from a secured dark web
+UI. A modern, container-native take on [Libation](https://github.com/rmcrackan/Libation).
 
-> **Personal-use backup only.** Unbound requires *your own* Audible credentials and is intended
-> for backing up content you have already purchased, for personal use. Removing DRM may be
-> restricted in your jurisdiction and generally violates Audible's Terms of Service. Do not use
-> Unbound to redistribute or share audiobooks. You accept these terms during first-run setup.
+<p align="center">
+  <img src="docs/screenshots/login.png" alt="Unbound login" width="90%">
+</p>
+
+> [!IMPORTANT]
+> **Personal-use backup only.** Unbound requires *your own* Audible credentials and is intended for
+> backing up content you have already purchased, for personal use. Removing DRM may be restricted in
+> your jurisdiction and generally violates Audible's Terms of Service. Do not use Unbound to
+> redistribute or share audiobooks. You accept these terms during first-run setup.
 
 ## Features
 
-- 🔐 **Secured** — first-run admin setup, login page, Argon2 passwords, HttpOnly/Secure session cookies.
-- 🔗 **Multiple Audible accounts** — link several at once; each gets its own color **badge**.
+- 🔐 **Secured** — first-run admin setup, login page, Argon2 password hashing, HttpOnly/Secure
+  session cookies, login rate-limiting, CSP + security headers.
+- 🔗 **Multiple Audible accounts** — link several at once; each gets its own colored badge.
 - 🧭 **Two linking flows** — guided in-app (email + password, with OTP/CAPTCHA prompts) *or*
   external-browser (log in on Amazon, paste the response URL).
-- 📚 **Library sync** — pull your full library; search, filter, and see per-account badges.
-- 🚫 **Exclude toggle** — flag titles you never want downloaded.
-- ⬇️ **Download → decrypt → tag → move** pipeline — AAXC (per-file voucher) and AAX
-  (activation bytes) via ffmpeg, cover art + metadata embedding, Libation-style naming templates.
-- 📊 **Dashboard + REST `/api/stats`** — connected/failed/in-progress counts, update banner,
-  live activity feed (SSE). Read-only **API keys** make it a drop-in [Homepage](https://gethomepage.dev) widget.
-- 🔒 **Secrets encrypted at rest** — Audible device tokens are AES-256-GCM encrypted; raw
-  passwords are never stored. Logs are redacted.
-- 🪵 **Structured logging** with rotation.
+- 📚 **Library sync** — pull your full library; search, filter by status, group by series, paginate.
+- ⬇️ **Download → decrypt → tag → move** — AAXC (per-file voucher) and AAX (activation bytes) via
+  ffmpeg, **embedded chapters**, cover art + metadata, Libation-style naming templates, with
+  **resume + retry**.
+- 🚫 **Exclude toggle** and **bulk actions** (download/exclude selected).
+- ⏰ **Scheduling & automation** — periodic library checks and optional auto-download of new titles.
+- 🔔 **Notifications** — [Apprise](https://github.com/caronc/apprise) (ntfy, Discord, Telegram,
+  email, webhooks…) on new books / completed / failed.
+- 🔖 **AudiobookShelf deep-linking** — completed downloads link straight to the matching ABS item.
+- 📊 **Dashboard + REST `/api/stats`** — connected/failed/in-progress counts, storage health,
+  live activity feed (SSE), and a read-only API key for a [Homepage](https://gethomepage.dev) widget.
+- 📱 **Installable PWA** with a dark, Audible-inspired theme — usable on phone/tablet.
+- 🔒 **Secrets encrypted at rest** (AES-256-GCM); raw passwords are never stored; logs are redacted.
 
-## Quick start (Docker — recommended)
+## Screenshots
 
-```bash
-git clone https://github.com/unbound-app/unbound.git
-cd unbound/deploy
-cp .env.example .env
-# Edit .env: set a strong UNBOUND_SECRET_KEY and UNBOUND_LIBRARY_HOST_PATH.
-docker compose up -d --build
+| Dashboard | Library |
+| --- | --- |
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Library](docs/screenshots/library.png) |
+
+| Accounts | Settings |
+| --- | --- |
+| ![Accounts](docs/screenshots/accounts.png) | ![Settings](docs/screenshots/settings.png) |
+
+## Quick start (Docker Compose)
+
+Unbound ships as two images (published to GHCR on each release). Create a `docker-compose.yml`:
+
+```yaml
+services:
+  backend:
+    image: ghcr.io/hankscafe/unbound-backend:latest
+    restart: unless-stopped
+    environment:
+      # Generate: python -c "import secrets; print(secrets.token_urlsafe(48))"
+      UNBOUND_SECRET_KEY: "CHANGE-ME"
+      UNBOUND_DATA_DIR: /data
+      UNBOUND_DATABASE_URL: sqlite:////data/unbound.db
+      # Set false only for plain-HTTP LAN testing; keep true behind HTTPS.
+      UNBOUND_COOKIE_SECURE: "true"
+    volumes:
+      - unbound_data:/data
+      # Your audiobook library lives here — bind-mount a host/NAS directory:
+      - /path/to/your/audiobooks:/data/library
+    expose:
+      - "8000"
+
+  frontend:
+    image: ghcr.io/hankscafe/unbound-frontend:latest
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  unbound_data:
 ```
 
-Open **http://localhost:8080** (or your configured `UNBOUND_HTTP_PORT`). Complete first-run
-setup, then add and link an Audible account.
-
-> For plain-HTTP LAN testing, set `UNBOUND_COOKIE_SECURE=false` in `.env`. For anything
-> exposed beyond localhost, put Unbound behind a TLS reverse proxy (Caddy/Traefik/nginx) and
-> keep secure cookies on.
-
-## Quick start (bare metal)
-
-**Backend** (Python 3.11–3.12, plus `ffmpeg` on PATH):
+Then:
 
 ```bash
-cd backend
-python -m venv .venv && . .venv/Scripts/activate   # Windows
-# source .venv/bin/activate                         # Linux/macOS
-pip install -e .
-export UNBOUND_SECRET_KEY=$(python -c "import secrets;print(secrets.token_urlsafe(48))")
-export UNBOUND_COOKIE_SECURE=false                  # if not using HTTPS locally
+docker compose up -d
+```
+
+Open **http://localhost:8080**, complete the first-run admin setup, then add and link an Audible
+account. Point your library profile's root at a path under `/data/library` (e.g.
+`/data/library/audiobooks`) so decrypted files land in your mounted directory.
+
+> Behind anything beyond localhost, run Unbound behind a TLS reverse proxy (Caddy/Traefik/nginx)
+> and keep `UNBOUND_COOKIE_SECURE=true`.
+
+## Building from source
+
+```bash
+git clone https://github.com/hankscafe/unbound.git
+cd unbound
+docker compose -f deploy/docker-compose.yml up -d --build   # uses deploy/.env
+```
+
+Local dev (backend needs `ffmpeg` on PATH):
+
+```bash
+# Backend (Python 3.11–3.12)
+cd backend && python -m venv .venv && . .venv/Scripts/activate   # or bin/activate
+pip install -e ".[dev]"
+export UNBOUND_SECRET_KEY=dev UNBOUND_COOKIE_SECURE=false
 uvicorn app.main:app --reload --port 8000
+
+# Frontend (Node 20+)
+cd frontend && npm install && npm run dev   # http://localhost:5173, proxies /api to :8000
 ```
-
-**Frontend** (Node 20+):
-
-```bash
-cd frontend
-npm install
-npm run dev            # http://localhost:5173, proxies /api to :8000
-```
-
-For a production bare-metal build, run `npm run build` and serve `frontend/dist` behind a web
-server that proxies `/api` to the uvicorn process (see `deploy/nginx.conf`).
 
 ## Homepage widget
 
-Create a read API key under **Settings → API keys**, then add to Homepage's `services.yaml`:
+Create a read-only API key under **Settings → API keys**, then in Homepage's `services.yaml`:
 
 ```yaml
 - Media:
@@ -83,41 +129,38 @@ Create a read API key under **Settings → API keys**, then add to Homepage's `s
           headers:
             X-API-Key: unb_your_key_here
           mappings:
-            - field: accounts_linked
-              label: Linked
-            - field: downloaded
-              label: Downloaded
-            - field: in_progress
-              label: In progress
-            - field: failed
-              label: Failed
+            - { field: accounts_linked, label: Linked }
+            - { field: downloaded, label: Downloaded }
+            - { field: in_progress, label: Active }
+            - { field: failed, label: Failed }
 ```
 
-## Architecture
+## How it works
 
 | Layer     | Tech |
 |-----------|------|
-| Backend   | Python, **FastAPI**, SQLModel, Alembic; in-process worker pool |
-| Audible   | [`audible`](https://github.com/mkb79/Audible) library (auth, device reg, licensing) |
+| Backend   | Python · **FastAPI** · SQLModel · Alembic migrations · in-process worker |
+| Audible   | [`audible`](https://github.com/mkb79/Audible) (auth, device registration, licensing) |
 | Decrypt   | `ffmpeg` — `-audible_key/-audible_iv` (AAXC) or `-activation_bytes` (AAX) |
-| Frontend  | React + Vite + TypeScript + Tailwind (dark Audible theme), TanStack Query |
-| DB        | SQLite by default; Postgres via `UNBOUND_DATABASE_URL` |
-| Deploy    | Docker Compose (backend + nginx frontend) or bare metal |
+| Frontend  | React · Vite · TypeScript · Tailwind (dark Audible theme) · TanStack Query · PWA |
+| Database  | SQLite by default; Postgres via `UNBOUND_DATABASE_URL` |
+| Deploy    | Docker Compose (backend + nginx frontend); library is a host bind mount |
 
-See [`docs/`](docs/) for the security model and configuration reference. The full design lives in
-the implementation plan under source control history.
+See [`docs/`](docs/) for the [configuration reference](docs/configuration.md) and
+[security model](docs/security.md).
 
 ## Development
 
 ```bash
-# Backend tests (crypto roundtrip, log redaction, full web flow)
-cd backend && pip install -e ".[dev]" && pytest -q
-
-# Frontend typecheck + build
-cd frontend && npm run typecheck && npm run build
+cd backend && pip install -e ".[dev]" && ruff check app && pytest -q   # lint + tests
+cd frontend && npm ci && npm run typecheck && npm run build            # typecheck + build
 ```
+
+CI (GitHub Actions) runs these on every push/PR. Tagging `vX.Y.Z` publishes container images to
+GHCR and creates a GitHub Release.
 
 ## License
 
 AGPL-3.0-or-later. Unbound distributes *software* only — never audiobook content. Built on
-`audible` (AGPL-3.0); see its license for network-copyleft implications if you host a modified version.
+[`audible`](https://github.com/mkb79/Audible) (AGPL-3.0); review its license for the
+network-copyleft implications of hosting a modified version.

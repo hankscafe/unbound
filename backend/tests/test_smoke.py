@@ -52,8 +52,9 @@ def test_full_flow():
         assert r.status_code == 200, r.text
         assert r.json()["setup_required"] is True
 
-        # Health is open.
+        # Health + login covers are open (unauthenticated).
         assert client.get("/api/health").json()["status"] == "ok"
+        assert client.get("/api/covers").json()["covers"] == []  # no books yet
 
         # Cannot list accounts before auth.
         assert client.get("/api/accounts").status_code == 401
