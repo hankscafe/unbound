@@ -48,26 +48,17 @@ jobs:
         run: npm run build
 
   docker:
-    name: Docker images build
+    name: Docker image build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - name: Build backend image
+      - name: Build image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: deploy/Dockerfile.backend
+          file: deploy/Dockerfile
           push: false
-          tags: unbound-backend:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Build frontend image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/Dockerfile.frontend
-          push: false
-          tags: unbound-frontend:ci
+          tags: unbound:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max

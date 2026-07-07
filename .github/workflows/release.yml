@@ -38,33 +38,20 @@ jobs:
         id: meta
         run: |
           REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          echo "backend=ghcr.io/${REPO}-backend" >> "$GITHUB_OUTPUT"
-          echo "frontend=ghcr.io/${REPO}-frontend" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${REPO}" >> "$GITHUB_OUTPUT"
           echo "version=${TAG_NAME}" >> "$GITHUB_OUTPUT"
         env:
           TAG_NAME: ${{ inputs.tag || github.ref_name }}
 
-      - name: Build & push backend
+      - name: Build & push image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: deploy/Dockerfile.backend
+          file: deploy/Dockerfile
           push: true
           tags: |
-            ${{ steps.meta.outputs.backend }}:${{ steps.meta.outputs.version }}
-            ${{ steps.meta.outputs.backend }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build & push frontend
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/Dockerfile.frontend
-          push: true
-          tags: |
-            ${{ steps.meta.outputs.frontend }}:${{ steps.meta.outputs.version }}
-            ${{ steps.meta.outputs.frontend }}:latest
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+            ${{ steps.meta.outputs.image }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -74,6 +61,5 @@ jobs:
           tag_name: ${{ steps.meta.outputs.version }}
           generate_release_notes: true
           body: |
-            Container images for `${{ steps.meta.outputs.version }}`:
-            - `${{ steps.meta.outputs.backend }}:${{ steps.meta.outputs.version }}`
-            - `${{ steps.meta.outputs.frontend }}:${{ steps.meta.outputs.version }}`
+            Container image for `${{ steps.meta.outputs.version }}`:
+            - `${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}`

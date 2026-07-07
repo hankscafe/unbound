@@ -240,7 +240,7 @@ def me(user: User = Depends(current_user)) -> UserOut:
 
 def _oidc_redirect_uri(request: Request, config: oidc.OIDCConfig) -> str:
     """The callback URL registered at the IdP. Prefer the configured public base
-    URL — behind the nginx proxy the request base points at the backend host."""
+    URL — behind a reverse proxy the request base points at the container host."""
     base = (config.public_base_url or str(request.base_url)).rstrip("/")
     return f"{base}/api/auth/oidc/callback"
 

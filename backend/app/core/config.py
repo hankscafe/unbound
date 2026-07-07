@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     downloads_dir: Path = Path("./data/downloads")
     library_dir: Path = Path("./data/library")
     log_dir: Path = Path("./data/logs")
+    # Built SPA directory; when it exists the API process serves the web UI too
+    # (single-image deployment). Absent in dev/tests — the API runs alone.
+    static_dir: Path = Path("./static")
 
     # --- Database ---
     # SQLite by default; swap for e.g. postgresql+psycopg://user:pass@host/db

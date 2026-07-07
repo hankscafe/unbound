@@ -50,12 +50,13 @@ UI. A modern, container-native take on [Libation](https://github.com/rmcrackan/L
 
 ## Quick start (Docker Compose)
 
-Unbound ships as two images (published to GHCR on each release). Create a `docker-compose.yml`:
+Unbound ships as a single image (published to GHCR on each release) — the API also serves
+the web UI. Create a `docker-compose.yml`:
 
 ```yaml
 services:
-  backend:
-    image: ghcr.io/hankscafe/unbound-backend:latest
+  unbound:
+    image: ghcr.io/hankscafe/unbound:latest
     restart: unless-stopped
     environment:
       # Generate: python -c "import secrets; print(secrets.token_urlsafe(48))"
@@ -68,20 +69,15 @@ services:
       - unbound_data:/data
       # Your audiobook library lives here — bind-mount a host/NAS directory:
       - /path/to/your/audiobooks:/data/library
-    expose:
-      - "8000"
-
-  frontend:
-    image: ghcr.io/hankscafe/unbound-frontend:latest
-    restart: unless-stopped
-    depends_on:
-      - backend
     ports:
-      - "8080:80"
+      - "8080:8000"
 
 volumes:
   unbound_data:
 ```
+
+> Upgrading from ≤ 0.6.x (two images)? Replace the `backend`/`frontend` services with the
+> single `unbound` service above — same volumes, so your data and library carry over.
 
 Then:
 
@@ -147,7 +143,7 @@ Create a read-only API key under **Settings → API keys**, then in Homepage's `
 | Decrypt   | `ffmpeg` — `-audible_key/-audible_iv` (AAXC) or `-activation_bytes` (AAX) |
 | Frontend  | React · Vite · TypeScript · Tailwind (dark Audible theme) · TanStack Query · PWA |
 | Database  | SQLite by default; Postgres via `UNBOUND_DATABASE_URL` |
-| Deploy    | Docker Compose (backend + nginx frontend); library is a host bind mount |
+| Deploy    | Docker Compose, single image (FastAPI serves the SPA); library is a host bind mount |
 
 See [`docs/`](docs/) for the [configuration reference](docs/configuration.md) and
 [security model](docs/security.md).

@@ -42,9 +42,9 @@ account credentials/tokens**. This document explains how each is protected.
 
 ## In transit
 
-- The SPA and API share one origin; put Unbound behind a TLS-terminating reverse proxy for any
-  non-localhost exposure. SSE and WebSocket upgrade paths are proxied with buffering disabled
-  (see `deploy/nginx.conf`).
+- The SPA and API share one origin (one process serves both); put Unbound behind a
+  TLS-terminating reverse proxy for any non-localhost exposure. If your proxy buffers
+  responses, disable buffering for `/api/events/stream` (SSE).
 
 ## Key rotation (outline)
 

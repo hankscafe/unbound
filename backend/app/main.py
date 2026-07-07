@@ -6,6 +6,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import __version__
 from app.api.routers import accounts, auth, jobs, library, settings as settings_router
@@ -78,10 +80,19 @@ if settings.cors_origins:
     )
 
 
+# Self-contained SPA: no external origins. 'unsafe-inline' covers the built CSS.
+_CSP = (
+    "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; "
+    "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; "
+    "form-action 'self'"
+)
+
+
 @app.middleware("http")
 async def security_headers(request, call_next):
-    """Defense-in-depth response headers (also set at the nginx edge)."""
+    """Security response headers (the app serves the SPA itself — no nginx edge)."""
     response = await call_next(request)
+    response.headers.setdefault("Content-Security-Policy", _CSP)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
@@ -103,3 +114,25 @@ app.include_router(jobs.router, prefix=f"{api}/jobs")
 app.include_router(settings_router.router, prefix=f"{api}/settings")
 app.include_router(stats.router, prefix=api)
 app.include_router(stream.router, prefix=api)
+
+
+# --- Static SPA (single-image deployment) ------------------------------------
+# Mounted last so every /api route above wins. Client-side routes (/library,
+# /settings, ...) fall back to index.html; unknown /api paths stay JSON 404s.
+
+
+class SPAStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope):  # type: ignore[override]
+        try:
+            response = await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404 or path.split("/", 1)[0] == "api":
+                raise
+            return await super().get_response("index.html", scope)
+        if response.status_code == 404 and path.split("/", 1)[0] != "api":
+            return await super().get_response("index.html", scope)
+        return response
+
+
+if settings.static_dir.is_dir():
+    app.mount("/", SPAStaticFiles(directory=settings.static_dir, html=True), name="spa")
