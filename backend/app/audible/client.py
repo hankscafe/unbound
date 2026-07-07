@@ -137,6 +137,117 @@ def _normalize_item(item: dict[str, Any]) -> LibraryItem:
     )
 
 
+# --- Store: catalog search & wishlist ---------------------------------------
+
+
+@dataclass
+class StoreItem:
+    """A catalog/wishlist product (not necessarily owned)."""
+
+    asin: str
+    title: str
+    subtitle: str | None
+    authors: str | None
+    narrators: str | None
+    series: str | None
+    series_sequence: str | None
+    runtime_minutes: int | None
+    cover_url: str | None
+    price_display: str | None
+    release_date: str | None
+    raw: dict[str, Any]
+
+
+_STORE_RESPONSE_GROUPS = "contributors, media, price, product_attrs, product_desc, series"
+
+
+def _price_display(price: Any) -> str | None:
+    """Human display of the catalog price block (best-effort; shapes vary)."""
+    if not isinstance(price, dict):
+        return None
+    block = price.get("lowest_price") or price.get("list_price") or {}
+    base = block.get("base")
+    if base is None:
+        return None
+    currency = block.get("currency_code") or ""
+    return f"{base} {currency}".strip()
+
+
+def _normalize_product(item: dict[str, Any]) -> StoreItem:
+    base = _normalize_item(item)
+    return StoreItem(
+        asin=base.asin,
+        title=base.title,
+        subtitle=base.subtitle,
+        authors=base.authors,
+        narrators=base.narrators,
+        series=base.series,
+        series_sequence=base.series_sequence,
+        runtime_minutes=base.runtime_minutes,
+        cover_url=base.cover_url,
+        price_display=_price_display(item.get("price")),
+        release_date=item.get("release_date"),
+        raw=item,
+    )
+
+
+def search_catalog(
+    auth: "audible.Authenticator",  # type: ignore[name-defined]
+    keywords: str,
+    page: int = 0,
+    num_results: int = 20,
+) -> tuple[list[StoreItem], int]:
+    """Search the Audible catalog (marketplace comes from the account's auth)."""
+    _require_audible()
+    with audible.Client(auth=auth) as client:  # type: ignore[union-attr]
+        resp = client.get(
+            "1.0/catalog/products",
+            keywords=keywords,
+            num_results=min(num_results, 50),
+            page=page,
+            products_sort_by="Relevance",
+            response_groups=_STORE_RESPONSE_GROUPS,
+        )
+    products = resp.get("products", []) if isinstance(resp, dict) else []
+    total = int(resp.get("total_results") or len(products)) if isinstance(resp, dict) else 0
+    return [_normalize_product(p) for p in products], total
+
+
+def get_wishlist(auth: "audible.Authenticator") -> list[StoreItem]:  # type: ignore[name-defined]
+    """The account's full wishlist (paged)."""
+    _require_audible()
+    items: list[StoreItem] = []
+    with audible.Client(auth=auth) as client:  # type: ignore[union-attr]
+        page = 0
+        while True:
+            resp = client.get(
+                "1.0/wishlist",
+                num_results=50,
+                page=page,
+                response_groups=_STORE_RESPONSE_GROUPS,
+            )
+            batch = resp.get("products", []) if isinstance(resp, dict) else []
+            if not batch:
+                break
+            items.extend(_normalize_product(p) for p in batch)
+            if len(batch) < 50:
+                break
+            page += 1
+    return items
+
+
+def add_to_wishlist(auth: "audible.Authenticator", asin: str) -> None:  # type: ignore[name-defined]
+    _require_audible()
+    with audible.Client(auth=auth) as client:  # type: ignore[union-attr]
+        client.post("1.0/wishlist", body={"asin": asin})
+
+
+def remove_from_wishlist(auth: "audible.Authenticator", asin: str) -> None:  # type: ignore[name-defined]
+    _require_audible()
+    with audible.Client(auth=auth) as client:  # type: ignore[union-attr]
+        client.delete(f"1.0/wishlist/{asin}")
+
+
 # --- Library sync & licensing ---------------------------------------------
 
 # NB: "available_codecs" is NOT a valid *requested* library response group (Audible

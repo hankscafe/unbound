@@ -162,6 +162,35 @@ class BatchDownload(BaseModel):
     book_ids: list[int]
 
 
+# --- Store (Audible catalog search + wishlist) ------------------------------
+
+
+class StoreItemOut(BaseModel):
+    asin: str
+    title: str
+    subtitle: str | None = None
+    authors: str | None = None
+    narrators: str | None = None
+    series: str | None = None
+    series_sequence: str | None = None
+    runtime_minutes: int | None = None
+    cover_url: str | None = None
+    price_display: str | None = None
+    release_date: str | None = None
+    in_library: bool = False  # this account already owns it
+
+
+class StoreSearchOut(BaseModel):
+    items: list[StoreItemOut]
+    total: int
+    page: int
+
+
+class WishlistAdd(BaseModel):
+    account_id: int
+    asin: str
+
+
 # --- Jobs ------------------------------------------------------------------
 
 

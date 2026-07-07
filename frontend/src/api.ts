@@ -85,6 +85,27 @@ export interface Integrations {
   notify_on_update: boolean;
 }
 
+export interface StoreItem {
+  asin: string;
+  title: string;
+  subtitle: string | null;
+  authors: string | null;
+  narrators: string | null;
+  series: string | null;
+  series_sequence: string | null;
+  runtime_minutes: number | null;
+  cover_url: string | null;
+  price_display: string | null;
+  release_date: string | null;
+  in_library: boolean;
+}
+
+export interface StoreSearchResult {
+  items: StoreItem[];
+  total: number;
+  page: number;
+}
+
 export interface Job {
   id: number;
   book_id: number;
@@ -247,6 +268,16 @@ export const api = {
     req<{ checked: number; matched: number; auto_excluded: number }>(`/library/abs-match`, {
       method: "POST",
     }),
+
+  storeSearch: (accountId: number, q: string, page = 0) =>
+    req<StoreSearchResult>(
+      `/store/search?account_id=${accountId}&q=${encodeURIComponent(q)}&page=${page}`
+    ),
+  storeWishlist: (accountId: number) => req<StoreItem[]>(`/store/wishlist?account_id=${accountId}`),
+  wishlistAdd: (account_id: number, asin: string) =>
+    req<{ ok: boolean }>("/store/wishlist", { method: "POST", ...body({ account_id, asin }) }),
+  wishlistRemove: (accountId: number, asin: string) =>
+    req<void>(`/store/wishlist/${asin}?account_id=${accountId}`, { method: "DELETE" }),
 
   jobs: () => req<Job[]>("/jobs"),
   retryJob: (id: number) => req<Job>(`/jobs/${id}/retry`, { method: "POST" }),

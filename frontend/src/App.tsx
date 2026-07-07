@@ -9,6 +9,7 @@ import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Accounts from "./pages/Accounts";
 import Library from "./pages/Library";
+import Store from "./pages/Store";
 import Jobs from "./pages/Jobs";
 import Settings from "./pages/Settings";
 
@@ -16,6 +17,7 @@ const NAV = [
   { to: "/", label: "Dashboard", end: true },
   { to: "/accounts", label: "Accounts" },
   { to: "/library", label: "Library" },
+  { to: "/store", label: "Store" },
   { to: "/jobs", label: "Jobs" },
   { to: "/settings", label: "Settings" },
 ];
@@ -172,6 +174,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/accounts" element={<Accounts />} />
         <Route path="/library" element={<Library />} />
+        <Route path="/store" element={<Store />} />
         <Route path="/jobs" element={<Jobs />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />

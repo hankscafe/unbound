@@ -30,6 +30,8 @@ UI. A modern, container-native take on [Libation](https://github.com/rmcrackan/L
   **resume + retry**.
 - **Exclude toggle** and **bulk actions** (download/exclude selected).
 - **Scheduling & automation** — periodic library checks and optional auto-download of new titles.
+- **Store search & wishlist** — search Audible's catalog per account (prices, series, runtime),
+  see what you already own, and manage the account's wishlist. No purchasing.
 - **Notifications** — [Apprise](https://github.com/caronc/apprise) (ntfy, Discord, Telegram,
   email, webhooks…) on new books / completed / failed.
 - **AudiobookShelf integration** — books link straight to the matching ABS item, and titles
