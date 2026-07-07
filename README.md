@@ -19,6 +19,8 @@ UI. A modern, container-native take on [Libation](https://github.com/rmcrackan/L
 - **Secured** — first-run admin setup, login page, Argon2 password hashing, HttpOnly/Secure
   session cookies, auto-logout after 2h of inactivity, login rate-limiting, CSP + security headers.
 - **Two-factor authentication (TOTP)** — authenticator-app codes + one-time recovery codes.
+- **Multi-user with roles** — admins run everything; members browse the library/store and manage
+  wishlists for only the Audible accounts they're granted, with a separate purchase permission.
 - **Single sign-on (OIDC)** — sign in through Authentik, Keycloak, Authelia, Google, or any
   OpenID Connect provider (authorization code + PKCE).
 - **Multiple Audible accounts** — link several at once; each gets its own colored badge.

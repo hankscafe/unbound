@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, Integrations, LibraryProfile, OIDCSettings, TwoFASetup } from "../api";
+import { AdminUser, api, Integrations, LibraryProfile, OIDCSettings, TwoFASetup } from "../api";
+import { useIsAdmin, useMe } from "../hooks";
 import { Spinner } from "../components/ui";
 
 const H2 = "text-sm font-semibold uppercase tracking-wide text-slate-300";
@@ -634,6 +635,233 @@ function ApiKeysSection() {
   );
 }
 
+// --- Users (roles + account access) -----------------------------------------
+
+function UserCard({
+  u,
+  accounts,
+  isSelf,
+  onChanged,
+}: {
+  u: AdminUser;
+  accounts: { id: number; label: string }[];
+  isSelf: boolean;
+  onChanged: () => void;
+}) {
+  const [role, setRole] = useState(u.role);
+  const [active, setActive] = useState(u.is_active);
+  const [spend, setSpend] = useState(u.can_spend_credits);
+  const [accountIds, setAccountIds] = useState<Set<number>>(new Set(u.account_ids));
+  const [password, setPassword] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const toggleAccount = (id: number) =>
+    setAccountIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const save = async () => {
+    try {
+      await api.updateUser(u.id, {
+        role,
+        is_active: active,
+        can_spend_credits: spend,
+        account_ids: role === "member" ? [...accountIds] : u.account_ids,
+        ...(password ? { password } : {}),
+      });
+      setPassword("");
+      setMsg("Saved");
+      onChanged();
+    } catch (e: any) {
+      setMsg(e?.message || "Could not save");
+    }
+  };
+
+  return (
+    <div className="card space-y-3 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-medium text-slate-100">{u.username}</span>
+        {isSelf && <span className="pill bg-ink-800 text-slate-400">you</span>}
+        {u.totp_enabled && <span className="pill bg-emerald-500/15 text-emerald-400">2FA</span>}
+        {!u.is_active && <span className="pill bg-red-500/15 text-red-400">disabled</span>}
+        <div className="flex-1" />
+        <span className="text-xs text-slate-600">
+          {u.last_login_at ? `last login ${new Date(u.last_login_at).toLocaleDateString()}` : "never signed in"}
+        </span>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-slate-300">
+        <label className="flex items-center gap-2">
+          Role
+          <select className="input !w-28" value={role} onChange={(e) => setRole(e.target.value)}>
+            <option value="admin">admin</option>
+            <option value="member">member</option>
+          </select>
+        </label>
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
+          Active
+        </label>
+        <label className="flex items-center gap-2" title="Phase 2: allow buying with Audible credits">
+          <input type="checkbox" checked={spend} onChange={(e) => setSpend(e.target.checked)} />
+          May spend credits
+        </label>
+      </div>
+      {role === "member" && (
+        <div className="space-y-1">
+          <div className="label !mb-0">Audible account access</div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            {accounts.length === 0 && (
+              <span className="text-xs text-slate-500">No Audible accounts configured yet.</span>
+            )}
+            {accounts.map((a) => (
+              <label key={a.id} className="flex items-center gap-1.5 text-sm text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={accountIds.has(a.id)}
+                  onChange={() => toggleAccount(a.id)}
+                />
+                {a.label}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="min-w-[180px]">
+          <label className="label">Reset password (optional)</label>
+          <input
+            className="input"
+            type="password"
+            placeholder="new password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </div>
+        <button className="btn-primary" onClick={save}>
+          Save
+        </button>
+        {!isSelf && (
+          <button
+            className="btn-danger"
+            onClick={async () => {
+              try {
+                await api.deleteUser(u.id);
+                onChanged();
+              } catch (e: any) {
+                setMsg(e?.message || "Could not delete");
+              }
+            }}
+          >
+            Delete
+          </button>
+        )}
+        {msg && <span className="pb-2 text-sm text-slate-400">{msg}</span>}
+      </div>
+    </div>
+  );
+}
+
+function UsersSection() {
+  const qc = useQueryClient();
+  const { data: me } = useMe();
+  const { data: users, isLoading } = useQuery({ queryKey: ["users"], queryFn: api.users });
+  const { data: accounts } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState("member");
+  const [newAccess, setNewAccess] = useState<Set<number>>(new Set());
+  const [err, setErr] = useState<string | null>(null);
+  const refresh = () => qc.invalidateQueries({ queryKey: ["users"] });
+
+  if (isLoading) return <Spinner />;
+
+  const create = async () => {
+    setErr(null);
+    try {
+      await api.createUser({
+        username: username.trim(),
+        password,
+        role,
+        account_ids: role === "member" ? [...newAccess] : [],
+      });
+      setUsername("");
+      setPassword("");
+      setNewAccess(new Set());
+      refresh();
+    } catch (e: any) {
+      setErr(e?.message || "Could not create user");
+    }
+  };
+
+  return (
+    <section className="space-y-3">
+      <h2 className={H2}>Users</h2>
+      <p className="text-sm text-slate-500">
+        Admins can do everything. Members browse the library, jobs, and store — but only for the
+        Audible accounts checked below — and can manage wishlists. "May spend credits" is the
+        future purchase permission; nothing can be bought yet.
+      </p>
+      <div className="grid gap-2">
+        {(users || []).map((u) => (
+          <UserCard
+            key={u.id}
+            u={u}
+            accounts={accounts || []}
+            isSelf={me?.id === u.id}
+            onChanged={refresh}
+          />
+        ))}
+      </div>
+      <div className="card space-y-3 p-4">
+        <h3 className="text-sm font-semibold text-slate-300">New user</h3>
+        <div className="grid gap-3 md:grid-cols-3">
+          <div>
+            <label className="label">Username</label>
+            <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} />
+          </div>
+          <div>
+            <label className="label">Password (min 8 chars)</label>
+            <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </div>
+          <div>
+            <label className="label">Role</label>
+            <select className="input" value={role} onChange={(e) => setRole(e.target.value)}>
+              <option value="member">member</option>
+              <option value="admin">admin</option>
+            </select>
+          </div>
+        </div>
+        {role === "member" && (
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            {(accounts || []).map((a) => (
+              <label key={a.id} className="flex items-center gap-1.5 text-sm text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={newAccess.has(a.id)}
+                  onChange={() =>
+                    setNewAccess((prev) => {
+                      const next = new Set(prev);
+                      next.has(a.id) ? next.delete(a.id) : next.add(a.id);
+                      return next;
+                    })
+                  }
+                />
+                {a.label}
+              </label>
+            ))}
+          </div>
+        )}
+        {err && <div className="text-sm text-red-400">{err}</div>}
+        <button className="btn-primary" disabled={username.trim().length < 3 || password.length < 8} onClick={create}>
+          Create user
+        </button>
+      </div>
+    </section>
+  );
+}
+
 // --- Tabbed settings shell -------------------------------------------------
 
 const TABS = [
@@ -641,6 +869,7 @@ const TABS = [
   { id: "abs", label: "AudiobookShelf" },
   { id: "notifications", label: "Notifications" },
   { id: "library", label: "Library profiles" },
+  { id: "users", label: "Users" },
   { id: "security", label: "Security" },
   { id: "apikeys", label: "API keys" },
 ] as const;
@@ -648,12 +877,18 @@ const TABS = [
 type TabId = (typeof TABS)[number]["id"];
 
 export default function Settings() {
+  const isAdmin = useIsAdmin();
   const [tab, setTab] = useState<TabId>("automation");
+  // Members only get the Security tab (their own password/2FA).
+  useEffect(() => {
+    if (isAdmin === false) setTab("security");
+  }, [isAdmin]);
+  const visibleTabs = isAdmin ? TABS : TABS.filter((t) => t.id === "security");
   return (
     <div className="space-y-5">
       <h1 className="text-xl font-semibold text-slate-100">Settings</h1>
       <div className="no-scrollbar flex gap-1 overflow-x-auto border-b border-ink-800">
-        {TABS.map((t) => (
+        {visibleTabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
@@ -672,10 +907,11 @@ export default function Settings() {
         <IntegrationsSection tab={tab} />
       )}
       {tab === "library" && <LibraryProfilesSection />}
+      {tab === "users" && isAdmin && <UsersSection />}
       {tab === "security" && (
         <div className="space-y-6">
           <SecuritySection />
-          <OIDCSection />
+          {isAdmin && <OIDCSection />}
         </div>
       )}
       {tab === "apikeys" && <ApiKeysSection />}

@@ -91,6 +91,7 @@ def _user_out(user: User) -> UserOut:
         email=user.email,
         role=user.role.value,
         totp_enabled=user.totp_enabled,
+        can_spend_credits=user.can_spend_credits,
     )
 
 

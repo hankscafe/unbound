@@ -10,16 +10,19 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, select
 
-from app.api.deps import db_session, require_admin
+from app.api.deps import current_user, db_session, require_account_access
 from app.audible import client as ac
-from app.db.models import AccountStatus, AudibleAccount, Book, EventLog
+from app.db.models import AccountStatus, AudibleAccount, Book, EventLog, User
 from app.schemas import StoreItemOut, StoreSearchOut, WishlistAdd
 from app.services import accounts as account_svc
 
-router = APIRouter(tags=["store"], dependencies=[Depends(require_admin)])
+# Members may search and manage wishlists — but only on accounts they were
+# granted access to (admins: all accounts).
+router = APIRouter(tags=["store"])
 
 
-def _load_account(session: Session, account_id: int) -> AudibleAccount:
+def _load_account(session: Session, user: User, account_id: int) -> AudibleAccount:
+    require_account_access(session, user, account_id)
     account = session.get(AudibleAccount, account_id)
     if account is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Account not found")
@@ -58,8 +61,9 @@ def search(
     q: str = Query(min_length=1),
     page: int = 0,
     session: Session = Depends(db_session),
+    user: User = Depends(current_user),
 ) -> StoreSearchOut:
-    account = _load_account(session, account_id)
+    account = _load_account(session, user, account_id)
     try:
         auth = account_svc.load_authenticator(account)
         items, total = ac.search_catalog(auth, q, page=page)
@@ -70,8 +74,12 @@ def search(
 
 
 @router.get("/wishlist", response_model=list[StoreItemOut])
-def wishlist(account_id: int, session: Session = Depends(db_session)) -> list[StoreItemOut]:
-    account = _load_account(session, account_id)
+def wishlist(
+    account_id: int,
+    session: Session = Depends(db_session),
+    user: User = Depends(current_user),
+) -> list[StoreItemOut]:
+    account = _load_account(session, user, account_id)
     try:
         auth = account_svc.load_authenticator(account)
         items = ac.get_wishlist(auth)
@@ -82,27 +90,36 @@ def wishlist(account_id: int, session: Session = Depends(db_session)) -> list[St
 
 
 @router.post("/wishlist", status_code=status.HTTP_201_CREATED)
-def wishlist_add(payload: WishlistAdd, session: Session = Depends(db_session)) -> dict:
-    account = _load_account(session, payload.account_id)
+def wishlist_add(
+    payload: WishlistAdd,
+    session: Session = Depends(db_session),
+    user: User = Depends(current_user),
+) -> dict:
+    account = _load_account(session, user, payload.account_id)
     try:
         auth = account_svc.load_authenticator(account)
         ac.add_to_wishlist(auth, payload.asin)
     except Exception as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Wishlist add failed: {exc}") from exc
     session.add(EventLog(category="library", account_id=account.id,
-                         message=f"Wishlisted {payload.asin} on '{account.label}'"))
+                         message=f"'{user.username}' wishlisted {payload.asin} on '{account.label}'"))
     session.commit()
     return {"ok": True}
 
 
 @router.delete("/wishlist/{asin}", status_code=status.HTTP_204_NO_CONTENT)
-def wishlist_remove(asin: str, account_id: int, session: Session = Depends(db_session)) -> None:
-    account = _load_account(session, account_id)
+def wishlist_remove(
+    asin: str,
+    account_id: int,
+    session: Session = Depends(db_session),
+    user: User = Depends(current_user),
+) -> None:
+    account = _load_account(session, user, account_id)
     try:
         auth = account_svc.load_authenticator(account)
         ac.remove_from_wishlist(auth, asin)
     except Exception as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Wishlist remove failed: {exc}") from exc
     session.add(EventLog(category="library", account_id=account.id,
-                         message=f"Removed {asin} from wishlist on '{account.label}'"))
+                         message=f"'{user.username}' removed {asin} from wishlist on '{account.label}'"))
     session.commit()

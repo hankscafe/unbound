@@ -5,12 +5,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, col, select
 
-from app.api.deps import db_session, require_admin
-from app.db.models import Book, DownloadJob, JobState
+from app.api.deps import allowed_account_ids, current_user, db_session, require_admin
+from app.db.models import Book, DownloadJob, JobState, User
 from app.schemas import JobOut
 from app.worker.queue import enqueue
 
-router = APIRouter(tags=["jobs"], dependencies=[Depends(require_admin)])
+# Members may watch jobs for their allowed accounts; retry/cancel is admin-only.
+router = APIRouter(tags=["jobs"], dependencies=[Depends(current_user)])
+admin_only = [Depends(require_admin)]
 
 _ACTIVE = {
     JobState.queued, JobState.downloading, JobState.downloaded,
@@ -39,9 +41,18 @@ def _to_out(session: Session, job: DownloadJob) -> JobOut:
     )
 
 
+def _visible(session: Session, user: User, job: DownloadJob) -> bool:
+    allowed = allowed_account_ids(session, user)
+    if allowed is None:
+        return True
+    book = session.get(Book, job.book_id)
+    return book is not None and book.audible_account_id in allowed
+
+
 @router.get("", response_model=list[JobOut])
 def list_jobs(
     session: Session = Depends(db_session),
+    user: User = Depends(current_user),
     state: str | None = None,
     limit: int = 200,
 ) -> list[JobOut]:
@@ -49,18 +60,23 @@ def list_jobs(
     if state:
         stmt = stmt.where(DownloadJob.state == JobState(state))
     stmt = stmt.order_by(col(DownloadJob.updated_at).desc()).limit(limit)
-    return [_to_out(session, j) for j in session.exec(stmt).all()]
+    jobs = [j for j in session.exec(stmt).all() if _visible(session, user, j)]
+    return [_to_out(session, j) for j in jobs]
 
 
 @router.get("/{job_id}", response_model=JobOut)
-def get_job(job_id: int, session: Session = Depends(db_session)) -> JobOut:
+def get_job(
+    job_id: int,
+    session: Session = Depends(db_session),
+    user: User = Depends(current_user),
+) -> JobOut:
     job = session.get(DownloadJob, job_id)
-    if job is None:
+    if job is None or not _visible(session, user, job):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Job not found")
     return _to_out(session, job)
 
 
-@router.post("/{job_id}/retry", response_model=JobOut)
+@router.post("/{job_id}/retry", response_model=JobOut, dependencies=admin_only)
 def retry_job(job_id: int, session: Session = Depends(db_session)) -> JobOut:
     job = session.get(DownloadJob, job_id)
     if job is None:
@@ -76,7 +92,7 @@ def retry_job(job_id: int, session: Session = Depends(db_session)) -> JobOut:
     return _to_out(session, job)
 
 
-@router.post("/{job_id}/cancel", response_model=JobOut)
+@router.post("/{job_id}/cancel", response_model=JobOut, dependencies=admin_only)
 def cancel_job(job_id: int, session: Session = Depends(db_session)) -> JobOut:
     job = session.get(DownloadJob, job_id)
     if job is None:

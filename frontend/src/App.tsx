@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { api } from "./api";
-import { useIdleSessionRefresh } from "./hooks";
+import { useIdleSessionRefresh, useIsAdmin } from "./hooks";
 import { Logo, Spinner } from "./components/ui";
 import Setup from "./pages/Setup";
 import Login from "./pages/Login";
@@ -15,7 +15,7 @@ import Settings from "./pages/Settings";
 
 const NAV = [
   { to: "/", label: "Dashboard", end: true },
-  { to: "/accounts", label: "Accounts" },
+  { to: "/accounts", label: "Accounts", adminOnly: true },
   { to: "/library", label: "Library" },
   { to: "/store", label: "Store" },
   { to: "/jobs", label: "Jobs" },
@@ -23,9 +23,10 @@ const NAV = [
 ];
 
 function NavLinks() {
+  const isAdmin = useIsAdmin();
   return (
     <>
-      {NAV.map((n) => (
+      {NAV.filter((n) => !n.adminOnly || isAdmin).map((n) => (
         <NavLink
           key={n.to}
           to={n.to}
@@ -92,6 +93,13 @@ function UpdateBanner() {
       </div>
     </div>
   );
+}
+
+// Members get bounced home from admin-only pages (the API enforces regardless).
+function AdminRoute({ page }: { page: React.ReactNode }) {
+  const isAdmin = useIsAdmin();
+  if (isAdmin === undefined) return <Spinner />;
+  return isAdmin ? <>{page}</> : <Navigate to="/" replace />;
 }
 
 function Shell({ children, onLogout }: { children: React.ReactNode; onLogout: () => void }) {
@@ -172,7 +180,7 @@ export default function App() {
     <Shell onLogout={logout}>
       <Routes>
         <Route path="/" element={<Dashboard />} />
-        <Route path="/accounts" element={<Accounts />} />
+        <Route path="/accounts" element={<AdminRoute page={<Accounts />} />} />
         <Route path="/library" element={<Library />} />
         <Route path="/store" element={<Store />} />
         <Route path="/jobs" element={<Jobs />} />

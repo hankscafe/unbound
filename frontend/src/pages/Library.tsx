@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Book, api } from "../api";
-import { useLiveEvents } from "../hooks";
+import { useIsAdmin, useLiveEvents } from "../hooks";
 import { AccountBadge, Empty, Spinner, StatusPill } from "../components/ui";
 
 const PAGE_SIZE = 25;
@@ -15,11 +15,13 @@ function fmtRuntime(min: number | null): string {
 
 function BookModal({
   book,
+  isAdmin,
   onClose,
   onExclude,
   onDownload,
 }: {
   book: Book;
+  isAdmin: boolean;
   onClose: () => void;
   onExclude: (b: Book) => void;
   onDownload: (b: Book) => void;
@@ -94,13 +96,17 @@ function BookModal({
             </a>
           )}
           <div className="flex-1" />
-          <button className="btn-ghost whitespace-nowrap" onClick={() => onExclude(book)}>
-            {book.excluded ? "Include" : "Exclude"}
-          </button>
-          {!book.excluded && (
-            <button className="btn-primary whitespace-nowrap" onClick={() => onDownload(book)}>
-              Download
-            </button>
+          {isAdmin && (
+            <>
+              <button className="btn-ghost whitespace-nowrap" onClick={() => onExclude(book)}>
+                {book.excluded ? "Include" : "Exclude"}
+              </button>
+              {!book.excluded && (
+                <button className="btn-primary whitespace-nowrap" onClick={() => onDownload(book)}>
+                  Download
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -146,6 +152,7 @@ function bookStatus(b: Book): "excluded" | "downloaded" | "in_progress" | "faile
 
 function BookRow({
   b,
+  isAdmin,
   checked,
   onCheck,
   onOpen,
@@ -153,6 +160,7 @@ function BookRow({
   onDownload,
 }: {
   b: Book;
+  isAdmin: boolean;
   checked: boolean;
   onCheck: () => void;
   onOpen: () => void;
@@ -166,9 +174,11 @@ function BookRow({
         checked ? "bg-audible-500/5" : ""
       }`}
     >
-      <td className="w-10 px-3 py-2" onClick={(e) => e.stopPropagation()}>
-        <input type="checkbox" aria-label={`Select ${b.title}`} checked={checked} onChange={onCheck} />
-      </td>
+      {isAdmin && (
+        <td className="w-10 px-3 py-2" onClick={(e) => e.stopPropagation()}>
+          <input type="checkbox" aria-label={`Select ${b.title}`} checked={checked} onChange={onCheck} />
+        </td>
+      )}
       <td className="px-4 py-2">
         <div className="flex items-center gap-3">
           {b.cover_url && <img src={b.cover_url} alt="" className="h-10 w-10 rounded object-cover" />}
@@ -221,16 +231,18 @@ function BookRow({
         )}
       </td>
       <td className="px-4 py-2" onClick={(e) => e.stopPropagation()}>
-        <div className="flex justify-end gap-2">
-          <button className="btn-ghost !px-2 !py-1 text-xs" onClick={onExclude}>
-            {b.excluded ? "Include" : "Exclude"}
-          </button>
-          {!b.excluded && (
-            <button className="btn-primary !px-2 !py-1 text-xs" onClick={onDownload}>
-              Download
+        {isAdmin && (
+          <div className="flex justify-end gap-2">
+            <button className="btn-ghost !px-2 !py-1 text-xs" onClick={onExclude}>
+              {b.excluded ? "Include" : "Exclude"}
             </button>
-          )}
-        </div>
+            {!b.excluded && (
+              <button className="btn-primary !px-2 !py-1 text-xs" onClick={onDownload}>
+                Download
+              </button>
+            )}
+          </div>
+        )}
       </td>
     </tr>
   );
@@ -238,6 +250,7 @@ function BookRow({
 
 export default function Library() {
   useLiveEvents(); // live job/status updates on this page
+  const isAdmin = useIsAdmin() ?? false;
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [accountId, setAccountId] = useState<number | undefined>(undefined);
@@ -318,9 +331,11 @@ export default function Library() {
           <h1 className="text-xl font-semibold text-slate-100">Library</h1>
           <p className="text-sm text-slate-500">All owned titles across linked accounts.</p>
         </div>
-        <button className="btn-ghost" onClick={() => api.downloadAll().then(refresh)}>
-          Download all pending
-        </button>
+        {isAdmin && (
+          <button className="btn-ghost" onClick={() => api.downloadAll().then(refresh)}>
+            Download all pending
+          </button>
+        )}
       </div>
 
       {checked.size > 0 && (
@@ -396,14 +411,16 @@ export default function Library() {
           <table className="w-full min-w-[640px] text-sm">
             <thead className="bg-ink-850 text-slate-400">
               <tr>
-                <th className="w-10 px-3 py-2">
-                  <input
-                    type="checkbox"
-                    aria-label="Select all"
-                    checked={allChecked}
-                    onChange={toggleAll}
-                  />
-                </th>
+                {isAdmin && (
+                  <th className="w-10 px-3 py-2">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all"
+                      checked={allChecked}
+                      onChange={toggleAll}
+                    />
+                  </th>
+                )}
                 <th className="px-4 py-2 text-left font-medium">Title</th>
                 <th className="hidden px-4 py-2 text-left font-medium md:table-cell">Author</th>
                 <th className="px-4 py-2 text-left font-medium">Account</th>
@@ -416,7 +433,7 @@ export default function Library() {
                 <Fragment key={g.name || "all"}>
                   {groupBySeries && (
                     <tr className="border-t border-ink-800 bg-ink-850/60">
-                      <td colSpan={6} className="px-4 py-1.5 text-xs font-semibold text-audible-400">
+                      <td colSpan={isAdmin ? 6 : 5} className="px-4 py-1.5 text-xs font-semibold text-audible-400">
                         {g.name}{" "}
                         <span className="font-normal text-slate-500">({g.books.length})</span>
                       </td>
@@ -426,6 +443,7 @@ export default function Library() {
                     <BookRow
                       key={b.id}
                       b={b}
+                      isAdmin={isAdmin}
                       checked={checked.has(b.id)}
                       onCheck={() => toggleCheck(b.id)}
                       onOpen={() => setSelected(b)}
@@ -471,6 +489,7 @@ export default function Library() {
       {selectedLive && (
         <BookModal
           book={selectedLive}
+          isAdmin={isAdmin}
           onClose={() => setSelected(null)}
           onExclude={(b) => toggleExclude(b)}
           onDownload={(b) => download(b)}

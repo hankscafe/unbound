@@ -11,7 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import __version__
 from app.api.routers import accounts, auth, jobs, library, settings as settings_router
-from app.api.routers import stats, store, stream
+from app.api.routers import stats, store, stream, users
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.db.session import create_db_and_tables
@@ -113,6 +113,7 @@ app.include_router(library.router, prefix=f"{api}/library")
 app.include_router(jobs.router, prefix=f"{api}/jobs")
 app.include_router(settings_router.router, prefix=f"{api}/settings")
 app.include_router(store.router, prefix=f"{api}/store")
+app.include_router(users.router, prefix=f"{api}/users")
 app.include_router(stats.router, prefix=api)
 app.include_router(stream.router, prefix=api)
 

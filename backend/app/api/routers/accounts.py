@@ -6,10 +6,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
-from app.api.deps import db_session, require_admin
+from app.api.deps import allowed_account_ids, current_user, db_session, require_admin
 from app.audible import linking
 from app.audible.client import AudibleUnavailable
-from app.db.models import AccountStatus, AudibleAccount, EventLog
+from app.db.models import AccountStatus, AudibleAccount, EventLog, User
 from app.schemas import (
     AccountCreate,
     AccountOut,
@@ -22,7 +22,10 @@ from app.schemas import (
 from app.services import accounts as account_svc
 from app.worker.queue import enqueue
 
-router = APIRouter(tags=["accounts"], dependencies=[Depends(require_admin)])
+# Listing is open to any signed-in user (members see only their allowed accounts —
+# the Library/Store pages need it); every mutating endpoint requires admin.
+router = APIRouter(tags=["accounts"], dependencies=[Depends(current_user)])
+admin_only = [Depends(require_admin)]
 
 
 def _to_out(a: AudibleAccount) -> AccountOut:
@@ -39,12 +42,17 @@ def _to_out(a: AudibleAccount) -> AccountOut:
 
 
 @router.get("", response_model=list[AccountOut])
-def list_accounts(session: Session = Depends(db_session)) -> list[AccountOut]:
+def list_accounts(
+    session: Session = Depends(db_session), user: User = Depends(current_user)
+) -> list[AccountOut]:
     rows = session.exec(select(AudibleAccount).order_by(AudibleAccount.id)).all()
+    allowed = allowed_account_ids(session, user)
+    if allowed is not None:
+        rows = [a for a in rows if a.id in allowed]
     return [_to_out(a) for a in rows]
 
 
-@router.post("", response_model=AccountOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=AccountOut, status_code=status.HTTP_201_CREATED, dependencies=admin_only)
 def create_account(payload: AccountCreate, session: Session = Depends(db_session)) -> AccountOut:
     account = AudibleAccount(
         label=payload.label, marketplace=payload.marketplace, badge_color=payload.badge_color
@@ -55,7 +63,7 @@ def create_account(payload: AccountCreate, session: Session = Depends(db_session
     return _to_out(account)
 
 
-@router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=admin_only)
 def delete_account(account_id: int, session: Session = Depends(db_session)) -> None:
     account = session.get(AudibleAccount, account_id)
     if account is None:
@@ -107,7 +115,7 @@ def _persist_if_linked(
     return _step_to_out(step)
 
 
-@router.post("/{account_id}/link/guided", response_model=LinkStepOut)
+@router.post("/{account_id}/link/guided", response_model=LinkStepOut, dependencies=admin_only)
 def link_guided(
     account_id: int, payload: GuidedLinkStart, session: Session = Depends(db_session)
 ) -> LinkStepOut:
@@ -124,7 +132,7 @@ def link_guided(
     return _persist_if_linked(session, account, step)
 
 
-@router.post("/{account_id}/link/otp", response_model=LinkStepOut)
+@router.post("/{account_id}/link/otp", response_model=LinkStepOut, dependencies=admin_only)
 def link_otp(
     account_id: int, payload: LinkOtp, flow_id: str, session: Session = Depends(db_session)
 ) -> LinkStepOut:
@@ -133,7 +141,7 @@ def link_otp(
     return _persist_if_linked(session, account, step)
 
 
-@router.post("/{account_id}/link/captcha", response_model=LinkStepOut)
+@router.post("/{account_id}/link/captcha", response_model=LinkStepOut, dependencies=admin_only)
 def link_captcha(
     account_id: int, payload: LinkCaptcha, flow_id: str, session: Session = Depends(db_session)
 ) -> LinkStepOut:
@@ -142,7 +150,7 @@ def link_captcha(
     return _persist_if_linked(session, account, step)
 
 
-@router.post("/{account_id}/link/external/start", response_model=LinkStepOut)
+@router.post("/{account_id}/link/external/start", response_model=LinkStepOut, dependencies=admin_only)
 def link_external_start(account_id: int, session: Session = Depends(db_session)) -> LinkStepOut:
     account = _get_account(session, account_id)
     try:
@@ -158,7 +166,7 @@ def link_external_start(account_id: int, session: Session = Depends(db_session))
     return out
 
 
-@router.post("/{account_id}/link/external/complete", response_model=LinkStepOut)
+@router.post("/{account_id}/link/external/complete", response_model=LinkStepOut, dependencies=admin_only)
 def link_external_complete(
     account_id: int, payload: ExternalLinkComplete, session: Session = Depends(db_session)
 ) -> LinkStepOut:
@@ -167,7 +175,7 @@ def link_external_complete(
     return _persist_if_linked(session, account, step)
 
 
-@router.post("/{account_id}/unlink", response_model=AccountOut)
+@router.post("/{account_id}/unlink", response_model=AccountOut, dependencies=admin_only)
 def unlink(account_id: int, session: Session = Depends(db_session)) -> AccountOut:
     account = _get_account(session, account_id)
     account.encrypted_auth_blob = None
@@ -179,7 +187,7 @@ def unlink(account_id: int, session: Session = Depends(db_session)) -> AccountOu
     return _to_out(account)
 
 
-@router.post("/{account_id}/sync", response_model=AccountOut)
+@router.post("/{account_id}/sync", response_model=AccountOut, dependencies=admin_only)
 def sync_account(account_id: int, session: Session = Depends(db_session)) -> AccountOut:
     account = _get_account(session, account_id)
     if account.status != AccountStatus.linked:

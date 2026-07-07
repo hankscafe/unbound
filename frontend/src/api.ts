@@ -18,6 +18,29 @@ export interface User {
   email: string | null;
   role: string;
   totp_enabled: boolean;
+  can_spend_credits: boolean;
+}
+
+export interface AdminUser {
+  id: number;
+  username: string;
+  email: string | null;
+  role: string;
+  is_active: boolean;
+  totp_enabled: boolean;
+  can_spend_credits: boolean;
+  account_ids: number[];
+  created_at: string;
+  last_login_at: string | null;
+}
+
+export interface AdminUserUpdate {
+  email?: string | null;
+  role?: string;
+  is_active?: boolean;
+  can_spend_credits?: boolean;
+  password?: string;
+  account_ids?: number[];
 }
 
 export interface LoginResult {
@@ -268,6 +291,13 @@ export const api = {
     req<{ checked: number; matched: number; auto_excluded: number }>(`/library/abs-match`, {
       method: "POST",
     }),
+
+  users: () => req<AdminUser[]>("/users"),
+  createUser: (d: { username: string; password: string; email?: string; role: string; account_ids: number[] }) =>
+    req<AdminUser>("/users", { method: "POST", ...body(d) }),
+  updateUser: (id: number, d: AdminUserUpdate) =>
+    req<AdminUser>(`/users/${id}`, { method: "PUT", ...body(d) }),
+  deleteUser: (id: number) => req<void>(`/users/${id}`, { method: "DELETE" }),
 
   storeSearch: (accountId: number, q: string, page = 0) =>
     req<StoreSearchResult>(

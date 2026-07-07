@@ -7,7 +7,7 @@ from sqlmodel import Session, col, or_, select
 
 from urllib.parse import quote
 
-from app.api.deps import db_session, require_admin
+from app.api.deps import allowed_account_ids, current_user, db_session, require_admin
 from app.audible.marketplace import audible_product_url
 from app.db import init_db
 from app.db.models import (
@@ -17,11 +17,15 @@ from app.db.models import (
     DownloadJob,
     EventLog,
     JobState,
+    User,
 )
 from app.schemas import BatchDownload, BatchExclude, BookOut, ExcludeRequest
 from app.worker.queue import enqueue
 
-router = APIRouter(tags=["library"], dependencies=[Depends(require_admin)])
+# Browsing is open to any signed-in user (members see only their allowed
+# accounts' books); anything that mutates or downloads requires admin.
+router = APIRouter(tags=["library"], dependencies=[Depends(current_user)])
+admin_only = [Depends(require_admin)]
 
 
 def _latest_job(session: Session, book_id: int) -> DownloadJob | None:
@@ -79,6 +83,7 @@ def _to_out(session: Session, book: Book, accounts: dict[int, AudibleAccount]) -
 @router.get("", response_model=list[BookOut])
 def list_library(
     session: Session = Depends(db_session),
+    user: User = Depends(current_user),
     account_id: int | None = None,
     excluded: bool | None = None,
     search: str | None = None,
@@ -86,6 +91,9 @@ def list_library(
     offset: int = 0,
 ) -> list[BookOut]:
     stmt = select(Book)
+    allowed = allowed_account_ids(session, user)
+    if allowed is not None:
+        stmt = stmt.where(col(Book.audible_account_id).in_(allowed))
     if account_id is not None:
         stmt = stmt.where(Book.audible_account_id == account_id)
     if excluded is not None:
@@ -103,15 +111,22 @@ def list_library(
 
 
 @router.get("/{book_id}", response_model=BookOut)
-def get_book(book_id: int, session: Session = Depends(db_session)) -> BookOut:
+def get_book(
+    book_id: int,
+    session: Session = Depends(db_session),
+    user: User = Depends(current_user),
+) -> BookOut:
     book = session.get(Book, book_id)
     if book is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Book not found")
+    allowed = allowed_account_ids(session, user)
+    if allowed is not None and book.audible_account_id not in allowed:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Book not found")
     accounts = {a.id: a for a in session.exec(select(AudibleAccount)).all()}
     return _to_out(session, book, accounts)
 
 
-@router.post("/{book_id}/exclude", response_model=BookOut)
+@router.post("/{book_id}/exclude", response_model=BookOut, dependencies=admin_only)
 def set_excluded(
     book_id: int, payload: ExcludeRequest, session: Session = Depends(db_session)
 ) -> BookOut:
@@ -151,7 +166,7 @@ def _queue_download(session: Session, book: Book) -> DownloadJob | None:
     return job
 
 
-@router.post("/{book_id}/download", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/{book_id}/download", status_code=status.HTTP_202_ACCEPTED, dependencies=admin_only)
 def download_book(book_id: int, session: Session = Depends(db_session)) -> dict:
     book = session.get(Book, book_id)
     if book is None:
@@ -162,7 +177,7 @@ def download_book(book_id: int, session: Session = Depends(db_session)) -> dict:
     return {"job_id": job.id, "state": job.state.value}
 
 
-@router.post("/download-all", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/download-all", status_code=status.HTTP_202_ACCEPTED, dependencies=admin_only)
 def download_all(
     session: Session = Depends(db_session), account_id: int | None = None
 ) -> dict:
@@ -184,7 +199,7 @@ def download_all(
     return {"queued": queued}
 
 
-@router.post("/batch/exclude")
+@router.post("/batch/exclude", dependencies=admin_only)
 def batch_exclude(payload: BatchExclude, session: Session = Depends(db_session)) -> dict:
     updated = 0
     for bid in payload.book_ids:
@@ -200,7 +215,7 @@ def batch_exclude(payload: BatchExclude, session: Session = Depends(db_session))
     return {"updated": updated}
 
 
-@router.post("/abs-match")
+@router.post("/abs-match", dependencies=admin_only)
 def abs_match(session: Session = Depends(db_session), rematch: bool = False) -> dict:
     """Resolve downloaded books to AudiobookShelf library items and store the item ids."""
     from app.services import audiobookshelf as abs_svc
@@ -211,7 +226,7 @@ def abs_match(session: Session = Depends(db_session), rematch: bool = False) -> 
     return result
 
 
-@router.post("/batch/download", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/batch/download", status_code=status.HTTP_202_ACCEPTED, dependencies=admin_only)
 def batch_download(payload: BatchDownload, session: Session = Depends(db_session)) -> dict:
     queued = 0
     for bid in payload.book_ids:

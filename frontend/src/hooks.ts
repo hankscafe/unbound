@@ -1,6 +1,16 @@
 import { useEffect } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Book, Job, api } from "./api";
+
+// Current user (role drives which controls the UI shows; the backend enforces).
+export function useMe() {
+  return useQuery({ queryKey: ["me"], queryFn: api.me, staleTime: 5 * 60 * 1000 });
+}
+
+export function useIsAdmin(): boolean | undefined {
+  const { data: me } = useMe();
+  return me ? me.role === "admin" : undefined;
+}
 
 // States that end a job (also refresh stats/library once, not just the bar).
 const TERMINAL = ["completed", "failed", "excluded", "cancelled"];

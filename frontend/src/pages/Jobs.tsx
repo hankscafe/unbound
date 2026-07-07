@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Job, api } from "../api";
-import { useLiveEvents } from "../hooks";
+import { useIsAdmin, useLiveEvents } from "../hooks";
 import { Empty, Spinner, StatusPill } from "../components/ui";
 
 const ACTIVE = ["queued", "downloading", "downloaded", "decrypting", "tagging", "moving"];
@@ -21,6 +21,7 @@ function fmtWhen(iso: string): string {
 }
 
 function JobCard({ job, onRefresh }: { job: Job; onRefresh: () => void }) {
+  const isAdmin = useIsAdmin() ?? false;
   const active = ACTIVE.includes(job.state);
   const downloading = job.state === "downloading";
   return (
@@ -52,12 +53,12 @@ function JobCard({ job, onRefresh }: { job: Job; onRefresh: () => void }) {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <StatusPill status={job.state} />
-          {(job.state === "failed" || job.state === "cancelled") && (
+          {isAdmin && (job.state === "failed" || job.state === "cancelled") && (
             <button className="btn-ghost !px-2 !py-1 text-xs" onClick={() => api.retryJob(job.id).then(onRefresh)}>
               Retry
             </button>
           )}
-          {active && (
+          {isAdmin && active && (
             <button className="btn-ghost !px-2 !py-1 text-xs" onClick={() => api.cancelJob(job.id).then(onRefresh)}>
               Cancel
             </button>
@@ -122,6 +123,7 @@ const FILTERS = [
 
 export default function Jobs() {
   useLiveEvents(); // SSE patches progress in real time; polling is just a fallback
+  const isAdmin = useIsAdmin() ?? false;
   const qc = useQueryClient();
   const [filter, setFilter] = useState<string>("");
   const [page, setPage] = useState(0);
@@ -188,7 +190,7 @@ export default function Jobs() {
           <h1 className="text-xl font-semibold text-slate-100">Jobs</h1>
           <p className="text-sm text-slate-500">Download, decrypt, and move progress.</p>
         </div>
-        {failed.length > 0 && (
+        {isAdmin && failed.length > 0 && (
           <button
             className="btn-ghost"
             onClick={() => Promise.all(failed.map((j) => api.retryJob(j.id))).then(refresh)}

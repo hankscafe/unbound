@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 
 from app.core.config import get_settings
 from app.core.security import decode_session_token
-from app.db.models import ApiKey, User
+from app.db.models import ApiKey, User, UserAccountAccess, UserRole
 from app.db.session import get_session
 
 settings = get_settings()
@@ -44,6 +44,23 @@ def require_admin(user: User = Depends(current_user)) -> User:
     if user.role != "admin":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin privileges required")
     return user
+
+
+def allowed_account_ids(session: Session, user: User) -> set[int] | None:
+    """Audible accounts this user may see. ``None`` means unrestricted (admin);
+    members get their allow-list (possibly empty — access is granted explicitly)."""
+    if user.role == UserRole.admin:
+        return None
+    rows = session.exec(
+        select(UserAccountAccess).where(UserAccountAccess.user_id == user.id)
+    ).all()
+    return {r.audible_account_id for r in rows}
+
+
+def require_account_access(session: Session, user: User, account_id: int) -> None:
+    allowed = allowed_account_ids(session, user)
+    if allowed is not None and account_id not in allowed:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "No access to this Audible account")
 
 
 def _hash_api_key(raw: str) -> str:

@@ -1,6 +1,6 @@
 [project]
 name = "unbound-backend"
-version = "0.10.0"
+version = "0.11.0"
 description = "Unbound — self-hosted Audible library manager (Libation-style), REST API + web UI"
 requires-python = ">=3.11,<3.13"
 license = { text = "AGPL-3.0-or-later" }

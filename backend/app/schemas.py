@@ -27,6 +27,37 @@ class UserOut(BaseModel):
     email: str | None
     role: str
     totp_enabled: bool = False
+    can_spend_credits: bool = False
+
+
+class UserAdminOut(BaseModel):
+    id: int
+    username: str
+    email: str | None
+    role: str
+    is_active: bool
+    totp_enabled: bool
+    can_spend_credits: bool
+    account_ids: list[int]  # Audible accounts a member may use (admins: all)
+    created_at: datetime
+    last_login_at: datetime | None
+
+
+class UserAdminCreate(BaseModel):
+    username: str = Field(min_length=3, max_length=64)
+    password: str = Field(min_length=8, max_length=256)
+    email: str | None = None
+    role: str = "member"
+    account_ids: list[int] = Field(default_factory=list)
+
+
+class UserAdminUpdate(BaseModel):
+    email: str | None = None
+    role: str | None = None
+    is_active: bool | None = None
+    can_spend_credits: bool | None = None
+    password: str | None = Field(default=None, min_length=8, max_length=256)
+    account_ids: list[int] | None = None
 
 
 class LoginResult(BaseModel):

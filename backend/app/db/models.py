@@ -24,8 +24,8 @@ def _utcnow() -> datetime:
 
 
 class UserRole(str, enum.Enum):
-    admin = "admin"
-    viewer = "viewer"
+    admin = "admin"  # everything
+    member = "member"  # browse allowed accounts' library/store, manage wishlists
 
 
 class AccountStatus(str, enum.Enum):
@@ -76,6 +76,22 @@ class User(SQLModel, table=True):
     totp_secret: str | None = Field(default=None, sa_column=Column(Text))
     totp_enabled: bool = False
     totp_recovery_codes: str | None = Field(default=None, sa_column=Column(Text))
+    # Purchase grant (Phase 2): may spend the account's Audible credits. Admin-granted,
+    # default off for everyone — including admins.
+    can_spend_credits: bool = False
+
+
+class UserAccountAccess(SQLModel, table=True):
+    """Allow-list: which Audible accounts a member may see/use.
+
+    Admins implicitly have access to every account; members only to rows here
+    (a member with no rows sees no accounts at all).
+    """
+
+    __tablename__ = "user_account_access"
+
+    user_id: int = Field(foreign_key="users.id", primary_key=True)
+    audible_account_id: int = Field(foreign_key="audible_accounts.id", primary_key=True)
 
 
 class AudibleAccount(SQLModel, table=True):
