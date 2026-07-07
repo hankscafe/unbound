@@ -191,6 +191,7 @@ export const api = {
   login2fa: (mfa_token: string, code: string) =>
     req<LoginResult>("/auth/login/2fa", { method: "POST", ...body({ mfa_token, code }) }),
   logout: () => req<void>("/auth/logout", { method: "POST" }),
+  refreshSession: () => req<void>("/auth/refresh", { method: "POST" }),
   me: () => req<User>("/auth/me"),
   twofaSetup: () => req<TwoFASetup>("/auth/2fa/setup", { method: "POST" }),
   twofaEnable: (code: string) =>

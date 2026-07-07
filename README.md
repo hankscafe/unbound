@@ -17,7 +17,7 @@ UI. A modern, container-native take on [Libation](https://github.com/rmcrackan/L
 ## Features
 
 - 🔐 **Secured** — first-run admin setup, login page, Argon2 password hashing, HttpOnly/Secure
-  session cookies, login rate-limiting, CSP + security headers.
+  session cookies, auto-logout after 2h of inactivity, login rate-limiting, CSP + security headers.
 - 🛡️ **Two-factor authentication (TOTP)** — authenticator-app codes + one-time recovery codes.
 - 🎟️ **Single sign-on (OIDC)** — sign in through Authentik, Keycloak, Authelia, Google, or any
   OpenID Connect provider (authorization code + PKCE).

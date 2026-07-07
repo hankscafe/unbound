@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { api } from "./api";
+import { useIdleSessionRefresh } from "./hooks";
 import { Logo, Spinner } from "./components/ui";
 import Setup from "./pages/Setup";
 import Login from "./pages/Login";
@@ -92,6 +93,7 @@ function UpdateBanner() {
 }
 
 function Shell({ children, onLogout }: { children: React.ReactNode; onLogout: () => void }) {
+  useIdleSessionRefresh(); // keep the session alive only while the admin is active
   const { data: status } = useQuery({ queryKey: ["status"], queryFn: api.status });
   return (
     <div className="flex min-h-screen flex-col">
@@ -134,9 +136,12 @@ function Shell({ children, onLogout }: { children: React.ReactNode; onLogout: ()
 
 export default function App() {
   const navigate = useNavigate();
+  // Poll auth status so an expired (idle) session lands back on the login page
+  // within a minute; window-focus refetch catches it immediately on return.
   const { data: status, isLoading, refetch } = useQuery({
     queryKey: ["status"],
     queryFn: api.status,
+    refetchInterval: 60 * 1000,
   });
 
   if (isLoading || !status) {

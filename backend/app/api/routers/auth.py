@@ -64,16 +64,19 @@ def _record_login_attempt(request: Request) -> None:
     _LOGIN_ATTEMPTS[ip].append(time.time())
 
 
-def _set_session_cookie(response: Response, user_id: int) -> None:
+def _set_session_cookie(response: Response, user_id: int, auth_time: int | None = None) -> None:
+    """Issue the session cookie with the sliding idle TTL. ``auth_time`` is carried
+    across refreshes so the absolute session lifetime still applies."""
     token = create_session_token(
         subject=str(user_id),
         session_secret=settings.resolve_session_secret(),
-        ttl_seconds=settings.session_ttl_seconds,
+        ttl_seconds=settings.idle_timeout_seconds,
+        auth_time=auth_time,
     )
     response.set_cookie(
         key=settings.cookie_name,
         value=token,
-        max_age=settings.session_ttl_seconds,
+        max_age=settings.idle_timeout_seconds,
         httponly=True,
         secure=settings.cookie_secure,
         samesite="strict",
@@ -221,6 +224,32 @@ def _verify_second_factor(session: Session, user: User, code: str) -> bool:
         session.commit()
         return True
     return False
+
+
+@router.post("/refresh", status_code=status.HTTP_204_NO_CONTENT)
+def refresh_session(
+    request: Request,
+    response: Response,
+    user: User = Depends(current_user),
+) -> Response:
+    """Slide the idle-timeout window. The SPA calls this only while the admin is
+    actually interacting, so an idle (or closed) browser session lapses after
+    ``idle_timeout_seconds`` — background polling never keeps it alive."""
+    from app.core.security import decode_session_token
+
+    claims = decode_session_token(
+        request.cookies.get(settings.cookie_name, ""),
+        session_secret=settings.resolve_session_secret(),
+    )
+    auth_time = int(claims.get("auth_time") or claims["iat"])
+    now = int(datetime.now(timezone.utc).timestamp())
+    if now - auth_time > settings.session_ttl_seconds:
+        # Absolute lifetime reached — no more sliding; sign in again.
+        response.delete_cookie(settings.cookie_name, path="/")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired — sign in again")
+    _set_session_cookie(response, user.id, auth_time=auth_time)  # type: ignore[arg-type]
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

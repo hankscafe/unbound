@@ -11,6 +11,10 @@ account credentials/tokens**. This document explains how each is protected.
 - Sessions are signed **JWTs** carried in an **HttpOnly, Secure, SameSite=strict** cookie
   (`unbound_session`). `Secure` can be disabled (`UNBOUND_COOKIE_SECURE=false`) only for local
   HTTP testing.
+- **Idle auto-logout**: the cookie expires after 2h of inactivity (`UNBOUND_IDLE_TIMEOUT_SECONDS`).
+  The SPA renews it via `/api/auth/refresh` only while the admin is actually interacting —
+  background polling never extends a session. An absolute lifetime
+  (`UNBOUND_SESSION_TTL_SECONDS`, default 7 days) forces re-login even for active sessions.
 - All state-changing and data endpoints require an authenticated admin. `/api/health` is the
   only unauthenticated route. `/api/stats` accepts a session **or** a read-only API key.
 

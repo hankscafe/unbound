@@ -92,12 +92,18 @@ class SecretBox:
 _ALG = "HS256"
 
 
-def create_session_token(*, subject: str, session_secret: str, ttl_seconds: int) -> str:
+def create_session_token(
+    *, subject: str, session_secret: str, ttl_seconds: int, auth_time: int | None = None
+) -> str:
+    """Session JWT. ``exp`` is the sliding idle deadline; ``auth_time`` (when the
+    password/SSO login actually happened) survives refreshes so an absolute
+    session lifetime can be enforced on top."""
     now = datetime.now(timezone.utc)
     payload = {
         "sub": subject,
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(seconds=ttl_seconds)).timestamp()),
+        "auth_time": auth_time if auth_time is not None else int(now.timestamp()),
         "typ": "session",
     }
     return jwt.encode(payload, session_secret, algorithm=_ALG)

@@ -47,7 +47,12 @@ class Settings(BaseSettings):
     secret_key: str | None = None
     # Signing key for session/JWT cookies. Derived from secret_key if unset.
     session_secret: str | None = None
+    # Absolute session lifetime: even a continuously active admin re-authenticates
+    # after this long.
     session_ttl_seconds: int = 60 * 60 * 24 * 7  # 7 days
+    # Sliding idle timeout: the session cookie expires this long after the last
+    # user activity (the SPA renews it only while the admin is actually active).
+    idle_timeout_seconds: int = 60 * 60 * 2  # 2 hours
     cookie_secure: bool = True
     cookie_name: str = "unbound_session"
     # Comma-separated allowed origins for CORS in dev (SPA + API share origin in prod).

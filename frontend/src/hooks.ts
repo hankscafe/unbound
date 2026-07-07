@@ -1,9 +1,43 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Book, Job } from "./api";
+import { Book, Job, api } from "./api";
 
 // States that end a job (also refresh stats/library once, not just the bar).
 const TERMINAL = ["completed", "failed", "excluded", "cancelled"];
+
+// How often to renew the session while the user is active. The backend cookie
+// expires after 2h idle; renewing every 5 min of activity keeps it alive only
+// for someone actually using the app (background polling doesn't count).
+const SESSION_REFRESH_MS = 5 * 60 * 1000;
+
+// Renew the sliding session while the admin is genuinely active; once they go
+// idle the renewals stop and the backend logs them out at the idle timeout.
+export function useIdleSessionRefresh() {
+  const qc = useQueryClient();
+  useEffect(() => {
+    let lastActivity = Date.now();
+    const markActivity = () => {
+      lastActivity = Date.now();
+    };
+    const events: (keyof WindowEventMap)[] = ["pointerdown", "keydown", "wheel", "touchstart"];
+    for (const e of events) window.addEventListener(e, markActivity, { passive: true });
+
+    const timer = window.setInterval(async () => {
+      if (Date.now() - lastActivity >= SESSION_REFRESH_MS) return; // idle — let it lapse
+      try {
+        await api.refreshSession();
+      } catch {
+        // Expired (idle or absolute lifetime) → status refetch flips to the login page.
+        qc.invalidateQueries({ queryKey: ["status"] });
+      }
+    }, SESSION_REFRESH_MS);
+
+    return () => {
+      for (const e of events) window.removeEventListener(e, markActivity);
+      window.clearInterval(timer);
+    };
+  }, [qc]);
+}
 
 // Subscribe to the backend SSE stream. Job progress events patch the react-query
 // caches in place (real-time percent with no refetch); everything else falls back
