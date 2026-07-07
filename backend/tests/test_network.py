@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 from pathlib import Path
 
 _tmp = Path(tempfile.mkdtemp(prefix="unbound-test-"))
@@ -32,7 +33,7 @@ def net():
         yield network
     # Reset module state and remove the transition log rows we caused.
     network._online = True
-    network._last_probe = 0.0
+    network._last_probe = -network.PROBE_INTERVAL
     with Session(engine) as session:
         for e in session.exec(
             select(EventLog).where(col(EventLog.message).like("Network %"))
@@ -54,14 +55,16 @@ def test_mark_down_parks_and_probe_recovers(net, monkeypatch):
     assert net.ensure_online() is False
 
     # Force the interval to have elapsed; a failing probe keeps us down...
+    # (relative to monotonic "now" — on fresh CI VMs monotonic() can be < 60s,
+    # so an absolute 0.0 would NOT count as elapsed)
     monkeypatch.setattr(net, "probe", lambda: False)
-    net._last_probe = 0.0
+    net._last_probe = time.monotonic() - net.PROBE_INTERVAL - 1
     assert net.ensure_online() is False
     assert net.is_online() is False
 
     # ...and a succeeding probe flips us back up, exactly once signalling resume.
     monkeypatch.setattr(net, "probe", lambda: True)
-    net._last_probe = 0.0
+    net._last_probe = time.monotonic() - net.PROBE_INTERVAL - 1
     assert net.recheck_and_resume() is True  # down → up transition
     assert net.is_online() is True
     assert net.recheck_and_resume() is False  # already up — no double resume

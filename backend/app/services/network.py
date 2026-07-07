@@ -29,7 +29,9 @@ _PROBE_URLS = (
 
 _lock = threading.Lock()
 _online = True
-_last_probe = 0.0
+# Start "already due": time.monotonic() is seconds-since-boot on Linux, so a
+# freshly booted host would otherwise suppress the first recovery probe.
+_last_probe = -PROBE_INTERVAL
 
 
 def probe() -> bool:
