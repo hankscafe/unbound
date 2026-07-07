@@ -1,10 +1,13 @@
 name: Auto Release
 
-# Every commit bumps the SemVer version (backend/app/__init__.py). On each push to
-# main, tag the new version if its tag doesn't exist yet, then run the Release
-# workflow (build + push GHCR images, create the GitHub Release).
+# Every commit bumps the SemVer version (backend/app/__init__.py). When CI passes
+# on main, tag the new version if its tag doesn't exist yet, then run the Release
+# workflow (build + push GHCR images, create the GitHub Release). Gating on CI
+# means a commit with failing tests never becomes a release.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
 
 permissions:
@@ -13,12 +16,15 @@ permissions:
 jobs:
   tag:
     name: Tag new version
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.version.outputs.tag }}
       created: ${{ steps.version.outputs.created }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Detect version and create tag
         id: version
