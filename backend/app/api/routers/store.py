@@ -10,11 +10,22 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, select
 
+from sqlmodel import col
+
 from app.api.deps import current_user, db_session, require_account_access
 from app.audible import client as ac
+from app.db import init_db
 from app.db.models import AccountStatus, AudibleAccount, Book, EventLog, User
-from app.schemas import StoreItemOut, StoreSearchOut, WishlistAdd
+from app.schemas import (
+    PurchaseOut,
+    PurchaseRequest,
+    StoreConfigOut,
+    StoreItemOut,
+    StoreSearchOut,
+    WishlistAdd,
+)
 from app.services import accounts as account_svc
+from app.services import notifier
 
 # Members may search and manage wishlists — but only on accounts they were
 # granted access to (admins: all accounts).
@@ -55,6 +66,15 @@ def _to_out(item: ac.StoreItem, owned: set[str]) -> StoreItemOut:
     )
 
 
+@router.get("/config", response_model=StoreConfigOut)
+def store_config(
+    session: Session = Depends(db_session), _: User = Depends(current_user)
+) -> StoreConfigOut:
+    return StoreConfigOut(
+        purchases_enabled=init_db.get_bool(session, init_db.SETTING_PURCHASES_ENABLED)
+    )
+
+
 @router.get("/search", response_model=StoreSearchOut)
 def search(
     account_id: int,
@@ -87,6 +107,61 @@ def wishlist(
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Wishlist fetch failed: {exc}") from exc
     owned = _owned_asins(session, account_id)
     return [_to_out(i, owned) for i in items]
+
+
+@router.post("/purchase", response_model=PurchaseOut, status_code=status.HTTP_201_CREATED)
+def purchase(
+    payload: PurchaseRequest,
+    session: Session = Depends(db_session),
+    user: User = Depends(current_user),
+) -> PurchaseOut:
+    """Buy a title with ONE Audible credit. Requires the global purchasing switch
+    AND the caller's personal can_spend_credits grant AND access to the account.
+    Never touches the payment card — no credits means the order fails."""
+    if not init_db.get_bool(session, init_db.SETTING_PURCHASES_ENABLED):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Purchasing is disabled on this server")
+    if not user.can_spend_credits:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "You don't have permission to spend credits"
+        )
+    account = _load_account(session, user, payload.account_id)
+    already = session.exec(
+        select(Book).where(
+            Book.audible_account_id == account.id, col(Book.asin) == payload.asin
+        )
+    ).first()
+    if already:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This account already owns that title")
+
+    try:
+        auth = account_svc.load_authenticator(account)
+        resp = ac.purchase_with_credit(auth, payload.asin)
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"Purchase failed (no credit was charged unless Audible says otherwise): {exc}",
+        ) from exc
+
+    order_id = str(resp.get("order_id") or resp.get("orderId") or "") or None
+    session.add(EventLog(category="store", account_id=account.id,
+                         message=f"'{user.username}' bought '{payload.title}' ({payload.asin}) "
+                                 f"with 1 credit on '{account.label}'"))
+    session.commit()
+    notifier.send_if_enabled(
+        init_db.SETTING_NOTIFY_PURCHASE,
+        "Unbound: audiobook purchased",
+        f"{user.username} bought '{payload.title}' with 1 credit on '{account.label}'.",
+        default=True,
+    )
+    # Pull the new title into the library and start its download automatically.
+    from app.worker.queue import enqueue
+
+    enqueue("post_purchase", account_id=account.id, asin=payload.asin)
+    return PurchaseOut(
+        ok=True,
+        order_id=order_id,
+        message="Purchased — syncing the library and queueing the download.",
+    )
 
 
 @router.post("/wishlist", status_code=status.HTTP_201_CREATED)

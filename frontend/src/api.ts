@@ -106,6 +106,8 @@ export interface Integrations {
   notify_on_complete: boolean;
   notify_on_failure: boolean;
   notify_on_update: boolean;
+  notify_on_purchase: boolean;
+  purchases_enabled: boolean;
 }
 
 export interface StoreItem {
@@ -304,6 +306,12 @@ export const api = {
       `/store/search?account_id=${accountId}&q=${encodeURIComponent(q)}&page=${page}`
     ),
   storeWishlist: (accountId: number) => req<StoreItem[]>(`/store/wishlist?account_id=${accountId}`),
+  storeConfig: () => req<{ purchases_enabled: boolean }>("/store/config"),
+  purchase: (account_id: number, asin: string, title: string) =>
+    req<{ ok: boolean; order_id: string | null; message: string }>("/store/purchase", {
+      method: "POST",
+      ...body({ account_id, asin, title }),
+    }),
   wishlistAdd: (account_id: number, asin: string) =>
     req<{ ok: boolean }>("/store/wishlist", { method: "POST", ...body({ account_id, asin }) }),
   wishlistRemove: (accountId: number, asin: string) =>

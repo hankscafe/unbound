@@ -222,6 +222,22 @@ class WishlistAdd(BaseModel):
     asin: str
 
 
+class StoreConfigOut(BaseModel):
+    purchases_enabled: bool  # global switch; the per-user grant is on /auth/me
+
+
+class PurchaseRequest(BaseModel):
+    account_id: int
+    asin: str
+    title: str  # echoed into the audit trail; typed confirmation happens client-side
+
+
+class PurchaseOut(BaseModel):
+    ok: bool
+    order_id: str | None = None
+    message: str
+
+
 # --- Jobs ------------------------------------------------------------------
 
 
@@ -345,3 +361,6 @@ class IntegrationsSettings(BaseModel):
     notify_on_complete: bool = False
     notify_on_failure: bool = True
     notify_on_update: bool = True  # announce new Unbound releases
+    notify_on_purchase: bool = True  # announce credit purchases made through the Store
+    # Store purchasing (credits only): global switch; users also need the grant.
+    purchases_enabled: bool = False

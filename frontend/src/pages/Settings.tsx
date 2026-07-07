@@ -321,6 +321,26 @@ function IntegrationsSection({ tab }: { tab: "automation" | "abs" | "notificatio
               {dlMsg && <span className="text-sm text-slate-400">{dlMsg}</span>}
             </div>
           </div>
+
+          <h2 className={H2}>Store purchasing</h2>
+          <div className="card space-y-3 p-4">
+            <label className="flex items-start gap-2 text-sm text-slate-300">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={form.purchases_enabled}
+                onChange={(e) => set({ purchases_enabled: e.target.checked })}
+              />
+              <span>
+                Allow buying audiobooks with credits from the Store
+                <span className="block text-xs text-slate-500">
+                  Credits only — the payment card is never used; with no credits available a
+                  purchase fails. Each user additionally needs the “May spend credits” grant
+                  (Users tab). Purchased titles sync and download automatically.
+                </span>
+              </span>
+            </label>
+          </div>
         </>
       )}
 
@@ -452,6 +472,10 @@ function IntegrationsSection({ tab }: { tab: "automation" | "abs" | "notificatio
               <label className="flex items-center gap-2 text-sm text-slate-300">
                 <input type="checkbox" checked={form.notify_on_update} onChange={(e) => set({ notify_on_update: e.target.checked })} />
                 New Unbound version
+              </label>
+              <label className="flex items-center gap-2 text-sm text-slate-300">
+                <input type="checkbox" checked={form.notify_on_purchase} onChange={(e) => set({ notify_on_purchase: e.target.checked })} />
+                Credit purchase made
               </label>
             </div>
             <div>

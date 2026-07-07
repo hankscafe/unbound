@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { StoreItem, api } from "../api";
+import { useMe } from "../hooks";
 import { Empty, Spinner } from "../components/ui";
 
 function fmtRuntime(min: number | null): string | null {
@@ -10,16 +11,82 @@ function fmtRuntime(min: number | null): string | null {
   return h ? `${h}h ${m}m` : `${m}m`;
 }
 
+// Typed-title confirmation before a credit is spent — no accidental purchases.
+function PurchaseModal({
+  item,
+  accountLabel,
+  onClose,
+  onConfirm,
+  busy,
+  error,
+}: {
+  item: StoreItem;
+  accountLabel: string;
+  onClose: () => void;
+  onConfirm: () => void;
+  busy: boolean;
+  error: string | null;
+}) {
+  const [typed, setTyped] = useState("");
+  const matches = typed.trim().toLowerCase() === item.title.trim().toLowerCase();
+  return (
+    <div className="fixed inset-0 z-20 grid place-items-center bg-black/60 px-4 py-8" onClick={onClose}>
+      <div className="card w-full max-w-md space-y-4 p-5" onClick={(e) => e.stopPropagation()}>
+        <h2 className="text-lg font-semibold text-slate-100">Buy with 1 credit</h2>
+        <div className="flex gap-3">
+          {item.cover_url && (
+            <img src={item.cover_url} alt="" className="h-16 w-16 shrink-0 rounded object-cover" />
+          )}
+          <div className="min-w-0 text-sm">
+            <div className="font-medium text-slate-100">{item.title}</div>
+            {item.authors && <div className="text-slate-400">{item.authors}</div>}
+            <div className="mt-1 text-xs text-slate-500">Account: {accountLabel}</div>
+          </div>
+        </div>
+        <p className="rounded-lg bg-ink-850 p-3 text-xs text-slate-400">
+          This spends <span className="text-audible-400">one Audible credit</span> from this
+          account — monthly plan credits count. Unbound never charges your card: with no credits
+          available the purchase simply fails. After buying, the book is synced and its download
+          starts automatically.
+        </p>
+        <div>
+          <label className="label">Type the title to confirm</label>
+          <input
+            className="input"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder={item.title}
+            autoFocus
+          />
+        </div>
+        {error && <div className="text-sm text-red-400">{error}</div>}
+        <div className="flex justify-end gap-2">
+          <button className="btn-ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button className="btn-primary" disabled={!matches || busy} onClick={onConfirm}>
+            {busy ? "Purchasing…" : "Buy · 1 credit"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ItemCard({
   item,
   wishlisted,
   busy,
+  canBuy,
   onWishlist,
+  onBuy,
 }: {
   item: StoreItem;
   wishlisted: boolean;
   busy: boolean;
+  canBuy: boolean;
   onWishlist: (add: boolean) => void;
+  onBuy: () => void;
 }) {
   const runtime = fmtRuntime(item.runtime_minutes);
   return (
@@ -57,13 +124,20 @@ function ItemCard({
           <span />
         )}
         {!item.in_library && (
-          <button
-            className="btn-ghost !px-2 !py-1 text-xs"
-            disabled={busy}
-            onClick={() => onWishlist(!wishlisted)}
-          >
-            {wishlisted ? "Remove" : "+ Wishlist"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              className="btn-ghost !px-2 !py-1 text-xs"
+              disabled={busy}
+              onClick={() => onWishlist(!wishlisted)}
+            >
+              {wishlisted ? "Remove" : "+ Wishlist"}
+            </button>
+            {canBuy && (
+              <button className="btn-primary !px-2 !py-1 text-xs" disabled={busy} onClick={onBuy}>
+                Buy · 1 credit
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -72,14 +146,19 @@ function ItemCard({
 
 export default function Store() {
   const qc = useQueryClient();
+  const { data: me } = useMe();
   const [accountId, setAccountId] = useState<number | undefined>(undefined);
   const [view, setView] = useState<"search" | "wishlist">("search");
   const [input, setInput] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [buying, setBuying] = useState<StoreItem | null>(null);
+  const [purchaseMsg, setPurchaseMsg] = useState<string | null>(null);
 
   const { data: accounts } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
+  const { data: storeConfig } = useQuery({ queryKey: ["store-config"], queryFn: api.storeConfig });
+  const canBuy = Boolean(storeConfig?.purchases_enabled && me?.can_spend_credits);
   const linked = useMemo(() => (accounts || []).filter((a) => a.status === "linked"), [accounts]);
   useEffect(() => {
     if (accountId == null && linked.length > 0) setAccountId(linked[0].id);
@@ -98,6 +177,18 @@ export default function Store() {
     staleTime: 60 * 1000,
   });
   const wishlistAsins = new Set((wishlist.data || []).map((i) => i.asin));
+
+  const doPurchase = useMutation({
+    mutationFn: (item: StoreItem) => api.purchase(accountId!, item.asin, item.title),
+    onSuccess: (r, item) => {
+      setBuying(null);
+      setPurchaseMsg(`"${item.title}" — ${r.message}`);
+      qc.invalidateQueries({ queryKey: ["library"] });
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      qc.invalidateQueries({ queryKey: ["store-search"] });
+      qc.invalidateQueries({ queryKey: ["store-wishlist", accountId] });
+    },
+  });
 
   const toggleWishlist = useMutation({
     mutationFn: ({ asin, add }: { asin: string; add: boolean }) =>
@@ -133,7 +224,9 @@ export default function Store() {
       <div>
         <h1 className="text-xl font-semibold text-slate-100">Store</h1>
         <p className="text-sm text-slate-500">
-          Search Audible and manage the account wishlist. Purchases aren’t made here.
+          {canBuy
+            ? "Search Audible, manage wishlists, and buy with credits (never your card)."
+            : "Search Audible and manage the account wishlist."}
         </p>
       </div>
 
@@ -180,6 +273,11 @@ export default function Store() {
       </div>
 
       {error && <div className="text-sm text-red-400">{error}</div>}
+      {purchaseMsg && (
+        <div className="card border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-300">
+          {purchaseMsg}
+        </div>
+      )}
 
       {view === "search" ? (
         search.isFetching ? (
@@ -197,7 +295,13 @@ export default function Store() {
                   item={item}
                   wishlisted={wishlistAsins.has(item.asin)}
                   busy={toggleWishlist.isPending}
+                  canBuy={canBuy}
                   onWishlist={(add) => toggleWishlist.mutate({ asin: item.asin, add })}
+                  onBuy={() => {
+                    setPurchaseMsg(null);
+                    doPurchase.reset();
+                    setBuying(item);
+                  }}
                 />
               ))}
             </div>
@@ -241,10 +345,27 @@ export default function Store() {
               item={item}
               wishlisted
               busy={toggleWishlist.isPending}
+              canBuy={canBuy}
               onWishlist={() => toggleWishlist.mutate({ asin: item.asin, add: false })}
+              onBuy={() => {
+                setPurchaseMsg(null);
+                doPurchase.reset();
+                setBuying(item);
+              }}
             />
           ))}
         </div>
+      )}
+
+      {buying && (
+        <PurchaseModal
+          item={buying}
+          accountLabel={linked.find((a) => a.id === accountId)?.label || "account"}
+          busy={doPurchase.isPending}
+          error={doPurchase.error ? (doPurchase.error as any)?.message || "Purchase failed" : null}
+          onClose={() => setBuying(null)}
+          onConfirm={() => doPurchase.mutate(buying)}
+        />
       )}
     </div>
   );

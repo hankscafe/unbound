@@ -174,6 +174,44 @@ def sync_account(account_id: int) -> None:
             )
 
 
+# --- Post-purchase: sync, then queue the download of the new title ----------
+
+
+@task("post_purchase")
+def post_purchase(account_id: int, asin: str) -> None:
+    """After a Store purchase: sync the account so the new book appears, then
+    queue its download. Audible can lag a little, so retry the sync briefly."""
+    from app.worker.queue import enqueue
+
+    for attempt in range(3):
+        if attempt:
+            time.sleep(20 * attempt)
+        sync_account(account_id)
+        with Session(engine) as session:
+            book = session.exec(
+                select(Book).where(Book.audible_account_id == account_id, Book.asin == asin)
+            ).first()
+            if book is None:
+                continue
+            existing = session.exec(
+                select(DownloadJob).where(DownloadJob.book_id == book.id)
+            ).first()
+            if existing is None and not book.excluded:
+                job = DownloadJob(book_id=book.id, state=JobState.queued)  # type: ignore[arg-type]
+                session.add(job)
+                session.commit()
+                session.refresh(job)
+                enqueue("download_book", job_id=job.id)
+                log.info("post_purchase_download_queued", asin=asin, job_id=job.id)
+            return
+    with Session(engine) as session:
+        session.add(EventLog(level="warning", category="store", account_id=account_id,
+                             message=f"Purchased {asin} but it hasn't appeared in the library yet — "
+                                     "it will download on the next sync"))
+        session.commit()
+    log.warning("post_purchase_book_missing", asin=asin)
+
+
 # --- Download pipeline -----------------------------------------------------
 
 

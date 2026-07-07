@@ -248,6 +248,22 @@ def remove_from_wishlist(auth: "audible.Authenticator", asin: str) -> None:  # t
         client.delete(f"1.0/wishlist/{asin}")
 
 
+def purchase_with_credit(auth: "audible.Authenticator", asin: str) -> dict[str, Any]:
+    """Buy a title using ONE available Audible credit — never the payment card.
+
+    ``audiblecreditapplied=true`` draws from the account's credit balance
+    (monthly membership credits included). Zero credits → Audible rejects the
+    order; we deliberately never fall back to the default payment method.
+    """
+    _require_audible()
+    with audible.Client(auth=auth) as client:  # type: ignore[union-attr]
+        resp = client.post(
+            "1.0/orders", body={"asin": asin, "audiblecreditapplied": "true"}
+        )
+    log.info("credit_purchase", asin=asin)
+    return resp if isinstance(resp, dict) else {}
+
+
 # --- Library sync & licensing ---------------------------------------------
 
 # NB: "available_codecs" is NOT a valid *requested* library response group (Audible

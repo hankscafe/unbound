@@ -200,6 +200,8 @@ def get_integrations(session: Session = Depends(db_session)) -> IntegrationsSett
         notify_on_complete=init_db.get_bool(session, init_db.SETTING_NOTIFY_COMPLETE),
         notify_on_failure=init_db.get_bool(session, init_db.SETTING_NOTIFY_FAILURE, True),
         notify_on_update=init_db.get_bool(session, init_db.SETTING_NOTIFY_UPDATE, True),
+        notify_on_purchase=init_db.get_bool(session, init_db.SETTING_NOTIFY_PURCHASE, True),
+        purchases_enabled=init_db.get_bool(session, init_db.SETTING_PURCHASES_ENABLED),
     )
 
 
@@ -224,6 +226,8 @@ def update_integrations(
     init_db.set_setting(session, init_db.SETTING_NOTIFY_COMPLETE, str(payload.notify_on_complete).lower())
     init_db.set_setting(session, init_db.SETTING_NOTIFY_FAILURE, str(payload.notify_on_failure).lower())
     init_db.set_setting(session, init_db.SETTING_NOTIFY_UPDATE, str(payload.notify_on_update).lower())
+    init_db.set_setting(session, init_db.SETTING_NOTIFY_PURCHASE, str(payload.notify_on_purchase).lower())
+    init_db.set_setting(session, init_db.SETTING_PURCHASES_ENABLED, str(payload.purchases_enabled).lower())
     session.add(EventLog(category="system", message="Integrations settings updated"))
     session.commit()
     return get_integrations(session)

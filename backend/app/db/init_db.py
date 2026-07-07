@@ -33,6 +33,10 @@ SETTING_NOTIFY_NEW_BOOKS = "notify_on_new_books"
 SETTING_NOTIFY_COMPLETE = "notify_on_complete"
 SETTING_NOTIFY_FAILURE = "notify_on_failure"
 SETTING_NOTIFY_UPDATE = "notify_on_update"
+SETTING_NOTIFY_PURCHASE = "notify_on_purchase"
+# Store purchasing (credits only). Global kill-switch, default OFF; each user
+# additionally needs the can_spend_credits grant.
+SETTING_PURCHASES_ENABLED = "purchases_enabled"
 # Update announcements are sent once per version; this remembers the last one.
 SETTING_LAST_NOTIFIED_VERSION = "last_notified_update_version"
 
