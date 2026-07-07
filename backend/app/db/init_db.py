@@ -25,6 +25,8 @@ SETTING_AUTO_DOWNLOAD = "auto_download_new"
 SETTING_ABS_URL = "abs_url"
 SETTING_ABS_LIBRARY_ID = "abs_library_id"
 SETTING_ABS_TOKEN = "abs_token_enc"  # encrypted at rest
+# Auto-exclude books that already exist in AudiobookShelf (weren't downloaded by us)
+SETTING_ABS_AUTO_EXCLUDE = "abs_auto_exclude"
 # Notifications (Apprise). notify_urls is stored encrypted at rest.
 SETTING_NOTIFY_URLS = "notify_urls_enc"
 SETTING_NOTIFY_NEW_BOOKS = "notify_on_new_books"

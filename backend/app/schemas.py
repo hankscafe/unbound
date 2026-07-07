@@ -141,7 +141,9 @@ class BookOut(BaseModel):
     excluded: bool
     purchase_date: datetime | None = None
     audible_url: str | None = None
-    abs_url: str | None = None  # "open in AudiobookShelf" link (completed downloads only)
+    abs_url: str | None = None  # "open in AudiobookShelf" link (matched/completed books)
+    abs_present: bool = False  # the title already exists in AudiobookShelf
+    abs_auto_excluded: bool = False  # we auto-excluded it because ABS already has it
     output_path: str | None = None
     job_state: str | None = None
     job_progress: float | None = None
@@ -222,6 +224,8 @@ class StatsOut(BaseModel):
     library_total_bytes: int | None = None
     library_free_bytes: int | None = None
     library_warning: str | None = None
+    # Connectivity: False while downloads are parked waiting for the network.
+    network_online: bool = True
 
 
 # --- API keys --------------------------------------------------------------
@@ -273,6 +277,8 @@ class IntegrationsSettings(BaseModel):
     # ABS API token — write-only: send to set/replace; never echoed back.
     abs_token: str | None = None
     abs_token_set: bool = False  # read-only indicator that a token is stored
+    # Skip titles that already exist in AudiobookShelf (auto-exclude on match)
+    abs_auto_exclude: bool = False
     # Notifications (Apprise URLs, newline/comma separated). Stored encrypted.
     notify_urls: str | None = None
     notify_on_new_books: bool = False

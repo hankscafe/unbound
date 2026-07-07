@@ -67,7 +67,9 @@ def _to_out(session: Session, book: Book, accounts: dict[int, AudibleAccount]) -
         excluded=book.excluded,
         purchase_date=book.purchase_date,
         audible_url=audible_product_url(book.asin, account.marketplace if account else "us"),
-        abs_url=_abs_link(session, book) if completed else None,
+        abs_url=_abs_link(session, book) if (completed or book.abs_item_id) else None,
+        abs_present=book.abs_item_id is not None,
+        abs_auto_excluded=book.abs_auto_excluded,
         output_path=job.output_path if completed else None,
         job_state=job.state.value if job else None,
         job_progress=job.progress if job else None,
@@ -116,13 +118,22 @@ def set_excluded(
     book = session.get(Book, book_id)
     if book is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Book not found")
-    book.excluded = payload.excluded
+    _apply_exclude(book, payload.excluded)
     session.add(book)
     session.add(EventLog(category="library", book_id=book_id,
                          message=f"{'Excluded' if payload.excluded else 'Included'}: {book.title}"))
     session.commit()
     accounts = {a.id: a for a in session.exec(select(AudibleAccount)).all()}
     return _to_out(session, book, accounts)
+
+
+def _apply_exclude(book: Book, excluded: bool) -> None:
+    """Set the exclude flag; re-including a book we auto-excluded (already in
+    AudiobookShelf) is remembered so it's never auto-excluded again."""
+    if not excluded and book.abs_auto_excluded:
+        book.abs_auto_excluded = False
+        book.abs_exclude_override = True
+    book.excluded = excluded
 
 
 def _queue_download(session: Session, book: Book) -> DownloadJob | None:
@@ -179,7 +190,7 @@ def batch_exclude(payload: BatchExclude, session: Session = Depends(db_session))
     for bid in payload.book_ids:
         book = session.get(Book, bid)
         if book is not None and book.excluded != payload.excluded:
-            book.excluded = payload.excluded
+            _apply_exclude(book, payload.excluded)
             session.add(book)
             updated += 1
     if updated:

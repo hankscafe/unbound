@@ -16,27 +16,28 @@ UI. A modern, container-native take on [Libation](https://github.com/rmcrackan/L
 
 ## Features
 
-- 🔐 **Secured** — first-run admin setup, login page, Argon2 password hashing, HttpOnly/Secure
+- **Secured** — first-run admin setup, login page, Argon2 password hashing, HttpOnly/Secure
   session cookies, auto-logout after 2h of inactivity, login rate-limiting, CSP + security headers.
-- 🛡️ **Two-factor authentication (TOTP)** — authenticator-app codes + one-time recovery codes.
-- 🎟️ **Single sign-on (OIDC)** — sign in through Authentik, Keycloak, Authelia, Google, or any
+- **Two-factor authentication (TOTP)** — authenticator-app codes + one-time recovery codes.
+- **Single sign-on (OIDC)** — sign in through Authentik, Keycloak, Authelia, Google, or any
   OpenID Connect provider (authorization code + PKCE).
-- 🔗 **Multiple Audible accounts** — link several at once; each gets its own colored badge.
-- 🧭 **Two linking flows** — guided in-app (email + password, with OTP/CAPTCHA prompts) *or*
+- **Multiple Audible accounts** — link several at once; each gets its own colored badge.
+- **Two linking flows** — guided in-app (email + password, with OTP/CAPTCHA prompts) *or*
   external-browser (log in on Amazon, paste the response URL).
-- 📚 **Library sync** — pull your full library; search, filter by status, group by series, paginate.
-- ⬇️ **Download → decrypt → tag → move** — AAXC (per-file voucher) and AAX (activation bytes) via
+- **Library sync** — pull your full library; search, filter by status, group by series, paginate.
+- **Download → decrypt → tag → move** — AAXC (per-file voucher) and AAX (activation bytes) via
   ffmpeg, **embedded chapters**, cover art + metadata, Libation-style naming templates, with
   **resume + retry**.
-- 🚫 **Exclude toggle** and **bulk actions** (download/exclude selected).
-- ⏰ **Scheduling & automation** — periodic library checks and optional auto-download of new titles.
-- 🔔 **Notifications** — [Apprise](https://github.com/caronc/apprise) (ntfy, Discord, Telegram,
+- **Exclude toggle** and **bulk actions** (download/exclude selected).
+- **Scheduling & automation** — periodic library checks and optional auto-download of new titles.
+- **Notifications** — [Apprise](https://github.com/caronc/apprise) (ntfy, Discord, Telegram,
   email, webhooks…) on new books / completed / failed.
-- 🔖 **AudiobookShelf deep-linking** — completed downloads link straight to the matching ABS item.
-- 📊 **Dashboard + REST `/api/stats`** — connected/failed/in-progress counts, storage health,
+- **AudiobookShelf integration** — books link straight to the matching ABS item, and titles
+  already in ABS can be badged and auto-skipped from downloads (admin re-include sticks).
+- **Dashboard + REST `/api/stats`** — connected/failed/in-progress counts, storage health,
   live activity feed (SSE), and a read-only API key for a [Homepage](https://gethomepage.dev) widget.
-- 📱 **Installable PWA** with a dark, Audible-inspired theme — usable on phone/tablet.
-- 🔒 **Secrets encrypted at rest** (AES-256-GCM); raw passwords are never stored; logs are redacted.
+- **Installable PWA** with a dark, Audible-inspired theme — usable on phone/tablet.
+- **Secrets encrypted at rest** (AES-256-GCM); raw passwords are never stored; logs are redacted.
 
 ## Screenshots
 

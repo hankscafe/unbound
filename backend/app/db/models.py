@@ -118,6 +118,9 @@ class Book(SQLModel, table=True):
     is_aax_available: bool = False  # AAX (activation-bytes) fallback offered by Audible
     excluded: bool = Field(default=False, index=True)  # admin toggle: never download
     abs_item_id: str | None = None  # resolved AudiobookShelf library item id (deep-link)
+    # Auto-skip when the title already exists in AudiobookShelf (not downloaded by us):
+    abs_auto_excluded: bool = False  # we auto-excluded it because ABS already has it
+    abs_exclude_override: bool = False  # admin re-included it — never auto-exclude again
     raw_metadata: dict | None = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)

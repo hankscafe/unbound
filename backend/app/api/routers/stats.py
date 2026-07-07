@@ -8,6 +8,7 @@ from sqlmodel import Session, func, select
 from app.api.deps import api_key_or_session, db_session
 from app.db.models import Book
 from app.schemas import StatsOut
+from app.services import network as network_svc
 from app.services import stats as stats_svc
 from app.services import storage as storage_svc
 from app.services import updates as updates_svc
@@ -39,4 +40,4 @@ def get_stats(session: Session = Depends(db_session)) -> StatsOut:
     data = stats_svc.gather_stats(session)
     upd = updates_svc.check_for_update()
     storage = storage_svc.compute_storage(session)
-    return StatsOut(**data, **upd, **storage)
+    return StatsOut(**data, **upd, **storage, network_online=network_svc.is_online())

@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Job, api } from "../api";
 import { useLiveEvents } from "../hooks";
 import { Empty, Spinner, StatusPill } from "../components/ui";
 
 const ACTIVE = ["queued", "downloading", "downloaded", "decrypting", "tagging", "moving"];
+const PAGE_SIZE = 25;
 
 function fmtBytes(n: number | null): string {
   if (n == null) return "?";
@@ -86,12 +87,22 @@ function JobCard({ job, onRefresh }: { job: Job; onRefresh: () => void }) {
   );
 }
 
-function Section({ title, jobs, onRefresh }: { title: string; jobs: Job[]; onRefresh: () => void }) {
+function Section({
+  title,
+  jobs,
+  total,
+  onRefresh,
+}: {
+  title: string;
+  jobs: Job[];
+  total?: number;
+  onRefresh: () => void;
+}) {
   if (jobs.length === 0) return null;
   return (
     <section className="space-y-2">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
-        {title} <span className="font-normal text-slate-600">({jobs.length})</span>
+        {title} <span className="font-normal text-slate-600">({total ?? jobs.length})</span>
       </h2>
       <div className="grid gap-2">
         {jobs.map((j) => (
@@ -113,12 +124,16 @@ export default function Jobs() {
   useLiveEvents(); // SSE patches progress in real time; polling is just a fallback
   const qc = useQueryClient();
   const [filter, setFilter] = useState<string>("");
+  const [page, setPage] = useState(0);
   const { data: jobs, isLoading } = useQuery({
     queryKey: ["jobs"],
     queryFn: api.jobs,
     refetchInterval: 15000,
   });
   const refresh = () => qc.invalidateQueries({ queryKey: ["jobs"] });
+
+  // Back to the first page whenever the filter changes.
+  useEffect(() => setPage(0), [filter]);
 
   if (isLoading) return <Spinner />;
 
@@ -135,6 +150,36 @@ export default function Jobs() {
     failed: failed.length,
     completed: completed.length,
   };
+
+  // Paginate the section order as one flat sequence; each page re-groups its
+  // slice so section headings survive pagination.
+  const sectioned: { title: string; jobs: Job[] }[] = (
+    filter === ""
+      ? [
+          { title: "Active", jobs: active },
+          { title: "Failed", jobs: failed },
+          { title: "Completed", jobs: completed },
+          { title: "Other", jobs: other },
+        ]
+      : [
+          filter === "active"
+            ? { title: "Active", jobs: active }
+            : filter === "failed"
+              ? { title: "Failed", jobs: failed }
+              : { title: "Completed", jobs: completed },
+        ]
+  ).filter((s) => s.jobs.length > 0);
+
+  const flat = sectioned.flatMap((s) => s.jobs.map((j) => ({ section: s.title, job: j })));
+  const pageCount = Math.max(1, Math.ceil(flat.length / PAGE_SIZE));
+  const clampedPage = Math.min(page, pageCount - 1);
+  const pageItems = flat.slice(clampedPage * PAGE_SIZE, (clampedPage + 1) * PAGE_SIZE);
+  const pageSections: { title: string; jobs: Job[] }[] = [];
+  for (const { section, job } of pageItems) {
+    const last = pageSections[pageSections.length - 1];
+    if (last && last.title === section) last.jobs.push(job);
+    else pageSections.push({ title: section, jobs: [job] });
+  }
 
   return (
     <div className="space-y-5">
@@ -171,19 +216,47 @@ export default function Jobs() {
 
       {all.length === 0 ? (
         <Empty>No jobs yet. Trigger a download from the Library.</Empty>
+      ) : flat.length === 0 ? (
+        <Empty>Nothing here right now.</Empty>
       ) : (
         <div className="space-y-6">
-          {(filter === "" || filter === "active") && (
-            <Section title="Active" jobs={active} onRefresh={refresh} />
-          )}
-          {(filter === "" || filter === "failed") && (
-            <Section title="Failed" jobs={failed} onRefresh={refresh} />
-          )}
-          {(filter === "" || filter === "completed") && (
-            <Section title="Completed" jobs={completed} onRefresh={refresh} />
-          )}
-          {filter === "" && <Section title="Other" jobs={other} onRefresh={refresh} />}
-          {filter !== "" && counts[filter] === 0 && <Empty>Nothing here right now.</Empty>}
+          {pageSections.map((s, i) => (
+            <Section
+              key={`${s.title}-${i}`}
+              title={s.title}
+              jobs={s.jobs}
+              total={sectioned.find((x) => x.title === s.title)?.jobs.length}
+              onRefresh={refresh}
+            />
+          ))}
+        </div>
+      )}
+
+      {flat.length > PAGE_SIZE && (
+        <div className="flex items-center justify-between text-sm text-slate-400">
+          <span>
+            {clampedPage * PAGE_SIZE + 1}–{Math.min((clampedPage + 1) * PAGE_SIZE, flat.length)} of{" "}
+            {flat.length}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              className="btn-ghost !py-1 text-xs"
+              disabled={clampedPage === 0}
+              onClick={() => setPage(clampedPage - 1)}
+            >
+              Prev
+            </button>
+            <span className="text-xs text-slate-500">
+              Page {clampedPage + 1} / {pageCount}
+            </span>
+            <button
+              className="btn-ghost !py-1 text-xs"
+              disabled={clampedPage >= pageCount - 1}
+              onClick={() => setPage(clampedPage + 1)}
+            >
+              Next
+            </button>
+          </div>
         </div>
       )}
     </div>

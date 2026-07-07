@@ -29,8 +29,15 @@ _last_update_check: float = 0.0
 
 
 def _run_cycle() -> None:
+    from app.services import network
     from app.worker.queue import enqueue
     from app.worker.tasks import sync_account
+
+    if not network.ensure_online():
+        # No point syncing or queueing downloads into a dead network; the per-tick
+        # recovery check below resumes everything once connectivity returns.
+        log.info("scheduler_cycle_skipped_offline")
+        return
 
     with Session(engine) as session:
         auto_download = init_db.get_bool(session, init_db.SETTING_AUTO_DOWNLOAD)
@@ -90,6 +97,17 @@ def _loop() -> None:
                 _run_cycle()
         except Exception as exc:  # pragma: no cover - keep the loop alive
             log.error("scheduler_error", error=str(exc))
+        try:
+            # While the network is down, probe each tick; on recovery, resume the
+            # downloads that were parked (they stayed 'queued' in the DB).
+            from app.services import network
+
+            if network.recheck_and_resume():
+                from app.worker.tasks import requeue_parked_jobs
+
+                requeue_parked_jobs()
+        except Exception as exc:  # pragma: no cover - keep the loop alive
+            log.error("network_recovery_error", error=str(exc))
         try:
             # Update announcements run regardless of the library schedule — admins
             # should hear about new versions even with automation switched off.

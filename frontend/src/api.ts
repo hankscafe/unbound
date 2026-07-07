@@ -62,6 +62,8 @@ export interface Book {
   purchase_date: string | null;
   audible_url: string | null;
   abs_url: string | null;
+  abs_present: boolean;
+  abs_auto_excluded: boolean;
   output_path: string | null;
   job_state: string | null;
   job_progress: number | null;
@@ -75,6 +77,7 @@ export interface Integrations {
   abs_library_id: string | null;
   abs_token: string | null;
   abs_token_set: boolean;
+  abs_auto_exclude: boolean;
   notify_urls: string | null;
   notify_on_new_books: boolean;
   notify_on_complete: boolean;
@@ -129,6 +132,7 @@ export interface Stats {
   library_total_bytes: number | null;
   library_free_bytes: number | null;
   library_warning: string | null;
+  network_online: boolean;
 }
 
 export interface LinkStep {
@@ -239,7 +243,10 @@ export const api = {
     req<{ updated: number }>(`/library/batch/exclude`, { method: "POST", ...body({ book_ids, excluded }) }),
   batchDownload: (book_ids: number[]) =>
     req<{ queued: number }>(`/library/batch/download`, { method: "POST", ...body({ book_ids }) }),
-  absMatch: () => req<{ checked: number; matched: number }>(`/library/abs-match`, { method: "POST" }),
+  absMatch: () =>
+    req<{ checked: number; matched: number; auto_excluded: number }>(`/library/abs-match`, {
+      method: "POST",
+    }),
 
   jobs: () => req<Job[]>("/jobs"),
   retryJob: (id: number) => req<Job>(`/jobs/${id}/retry`, { method: "POST" }),

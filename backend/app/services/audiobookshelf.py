@@ -129,22 +129,30 @@ def test_connection(base: str, token: str) -> dict:
 
 
 def match_all(session: Session, rematch: bool = False) -> dict:
-    """Resolve completed books to ABS item ids and persist them. Best-effort per book."""
+    """Resolve books to ABS item ids and persist them. Best-effort per book.
+
+    Every book is matched (not just completed downloads) so titles that already
+    live in AudiobookShelf — imported from anywhere — are recognized. When the
+    ``abs_auto_exclude`` setting is on, matched books that we did NOT download
+    are auto-excluded from (auto-)downloading, unless an admin re-included them
+    before (``abs_exclude_override``).
+    """
     from sqlmodel import select
 
-    from app.db.models import Book, DownloadJob, JobState
+    from app.db.models import Book, DownloadJob, EventLog, JobState
 
     base, token, library_id = get_config(session)
     if not base or not token:
-        return {"configured": False, "checked": 0, "matched": 0}
+        return {"configured": False, "checked": 0, "matched": 0, "auto_excluded": 0}
 
     completed = {
         j.book_id
         for j in session.exec(select(DownloadJob).where(DownloadJob.state == JobState.completed)).all()
     }
-    checked = matched = 0
+    auto_exclude = init_db.get_bool(session, init_db.SETTING_ABS_AUTO_EXCLUDE)
+    checked = matched = auto_excluded = 0
     for book in session.exec(select(Book)).all():
-        if book.id not in completed or (book.abs_item_id and not rematch):
+        if book.abs_item_id and not rematch:
             continue
         checked += 1
         try:
@@ -156,6 +164,18 @@ def match_all(session: Session, rematch: bool = False) -> dict:
             book.abs_item_id = item_id
             session.add(book)
             matched += 1
+            if (
+                auto_exclude
+                and book.id not in completed  # our own downloads are fine where they are
+                and not book.excluded
+                and not book.abs_exclude_override  # admin said "download it anyway"
+            ):
+                book.excluded = True
+                book.abs_auto_excluded = True
+                auto_excluded += 1
+    if auto_excluded:
+        session.add(EventLog(category="library",
+                             message=f"Auto-excluded {auto_excluded} title(s) already in AudiobookShelf"))
     session.commit()
-    log.info("abs_match_complete", checked=checked, matched=matched)
-    return {"configured": True, "checked": checked, "matched": matched}
+    log.info("abs_match_complete", checked=checked, matched=matched, auto_excluded=auto_excluded)
+    return {"configured": True, "checked": checked, "matched": matched, "auto_excluded": auto_excluded}

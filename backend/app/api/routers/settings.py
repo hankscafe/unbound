@@ -194,6 +194,7 @@ def get_integrations(session: Session = Depends(db_session)) -> IntegrationsSett
         abs_library_id=init_db.get_setting(session, init_db.SETTING_ABS_LIBRARY_ID),
         abs_token=None,  # never echoed back
         abs_token_set=abs_svc.has_token(session),
+        abs_auto_exclude=init_db.get_bool(session, init_db.SETTING_ABS_AUTO_EXCLUDE),
         notify_urls="\n".join(notifier.get_urls(session)),
         notify_on_new_books=init_db.get_bool(session, init_db.SETTING_NOTIFY_NEW_BOOKS),
         notify_on_complete=init_db.get_bool(session, init_db.SETTING_NOTIFY_COMPLETE),
@@ -217,6 +218,7 @@ def update_integrations(
     )
     if payload.abs_token is not None and payload.abs_token.strip():
         abs_svc.set_token(session, payload.abs_token)  # only replace when a value is sent
+    init_db.set_setting(session, init_db.SETTING_ABS_AUTO_EXCLUDE, str(payload.abs_auto_exclude).lower())
     notifier.set_urls(session, payload.notify_urls)
     init_db.set_setting(session, init_db.SETTING_NOTIFY_NEW_BOOKS, str(payload.notify_on_new_books).lower())
     init_db.set_setting(session, init_db.SETTING_NOTIFY_COMPLETE, str(payload.notify_on_complete).lower())

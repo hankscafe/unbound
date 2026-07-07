@@ -73,6 +73,7 @@ function BookModal({
           ) : (
             <StatusPill status="pending" />
           )}
+          {book.abs_present && <AbsBadge auto={book.abs_auto_excluded} />}
         </div>
 
         {book.output_path && (
@@ -118,6 +119,22 @@ function Row({ label, value }: { label: string; value: string | null }) {
 }
 
 const ACTIVE_STATES = ["queued", "downloading", "downloaded", "decrypting", "tagging", "moving"];
+
+// Small badge for titles that already exist in AudiobookShelf.
+function AbsBadge({ auto }: { auto?: boolean }) {
+  return (
+    <span
+      className="pill bg-sky-500/15 text-sky-400"
+      title={
+        auto
+          ? "Already in AudiobookShelf — auto-excluded from downloads. Use Include to download it anyway."
+          : "This title already exists in your AudiobookShelf library."
+      }
+    >
+      In ABS{auto ? " · skipped" : ""}
+    </span>
+  );
+}
 
 function bookStatus(b: Book): "excluded" | "downloaded" | "in_progress" | "failed" | "pending" {
   if (b.excluded) return "excluded";
@@ -173,7 +190,10 @@ function BookRow({
       </td>
       <td className="px-4 py-2">
         {b.excluded ? (
-          <StatusPill status="excluded" />
+          <div className="flex flex-wrap items-center gap-1.5">
+            <StatusPill status="excluded" />
+            {b.abs_present && <AbsBadge auto={b.abs_auto_excluded} />}
+          </div>
         ) : b.job_state ? (
           <div>
             <div className="flex items-center gap-2">
@@ -194,7 +214,10 @@ function BookRow({
             )}
           </div>
         ) : (
-          <StatusPill status="pending" />
+          <div className="flex flex-wrap items-center gap-1.5">
+            <StatusPill status="pending" />
+            {b.abs_present && <AbsBadge />}
+          </div>
         )}
       </td>
       <td className="px-4 py-2" onClick={(e) => e.stopPropagation()}>

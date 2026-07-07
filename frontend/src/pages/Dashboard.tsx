@@ -38,6 +38,12 @@ export default function Dashboard() {
           <span className="font-semibold">Library storage problem:</span> {stats.library_warning}
         </div>
       )}
+      {!stats.network_online && (
+        <div className="card border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-300">
+          <span className="font-semibold">Network appears to be down.</span> Downloads are paused
+          and will resume automatically once connectivity returns.
+        </div>
+      )}
       <div>
         <h1 className="text-xl font-semibold text-slate-100">Dashboard</h1>
         <p className="text-sm text-slate-500">Live overview of your linked accounts and library.</p>

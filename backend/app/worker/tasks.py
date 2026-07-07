@@ -26,7 +26,7 @@ from app.db.session import engine
 from app.pipeline import chapters as chapters_mod
 from app.pipeline import decrypt, download, mover, tagging
 from app.services import accounts as account_svc
-from app.services import events, notifier
+from app.services import events, network, notifier
 from app.db import init_db
 from app.worker.queue import task
 
@@ -196,6 +196,13 @@ def download_book(job_id: int) -> None:
         job = session.get(DownloadJob, job_id)
         if job is None:
             return
+        if job.state != JobState.queued:
+            return  # cancelled meanwhile, or another worker already picked it up
+        if not network.ensure_online():
+            # Park (stays queued in the DB, out of the worker pool); the scheduler
+            # re-enqueues every parked job the moment connectivity returns.
+            log.info("download_deferred_offline", job_id=job_id)
+            return
         book = session.get(Book, job.book_id)
         if book is None:
             _set_state(session, job, JobState.failed, error_message="Book not found")
@@ -253,6 +260,14 @@ def download_book(job_id: int) -> None:
                     download.download_file(license.download_url, enc_path, on_progress=on_progress)
                     break
                 except Exception as exc:
+                    if isinstance(exc, (httpx.TransportError, httpx.TimeoutException)):
+                        # Transport failure = the network itself is suspect. Park the
+                        # job (the .part resumes later) instead of burning retries;
+                        # recovery re-enqueues it automatically.
+                        network.mark_down(_safe_error(exc))
+                        log.warning("download_parked_offline", asin=book.asin)
+                        _set_state(session, job, JobState.queued)
+                        return
                     if attempt == _MAX_DOWNLOAD_ATTEMPTS or not _transient(exc):
                         raise
                     wait = min(60, 2 ** attempt)
@@ -327,6 +342,20 @@ def download_book(job_id: int) -> None:
                 init_db.SETTING_NOTIFY_FAILURE, "Unbound: download failed",
                 f"{book.title}\n{safe}",
             )
+
+
+def requeue_parked_jobs() -> None:
+    """Re-enqueue jobs parked while the network was down (scheduler, on recovery)."""
+    from app.worker.queue import enqueue
+
+    with Session(engine) as session:
+        parked = session.exec(
+            select(DownloadJob).where(DownloadJob.state == JobState.queued)
+        ).all()
+    for job in parked:
+        enqueue("download_book", job_id=job.id)
+    if parked:
+        log.info("requeued_after_network_recovery", count=len(parked))
 
 
 def requeue_incomplete_jobs() -> None:

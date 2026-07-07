@@ -364,6 +364,22 @@ function IntegrationsSection({ tab }: { tab: "automation" | "abs" | "notificatio
                 onChange={(e) => set({ abs_library_id: e.target.value })}
               />
             </div>
+            <label className="flex items-start gap-2 border-t border-ink-800 pt-3 text-sm text-slate-300">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={form.abs_auto_exclude}
+                onChange={(e) => set({ abs_auto_exclude: e.target.checked })}
+              />
+              <span>
+                Skip titles already in AudiobookShelf
+                <span className="block text-xs text-slate-500">
+                  Books found in ABS that Unbound didn’t download get badged “In ABS” and
+                  auto-excluded from downloads. Re-including a book from the Library sticks — it
+                  won’t be skipped again.
+                </span>
+              </span>
+            </label>
             <div className="flex flex-wrap items-center gap-2">
               <button
                 className="btn-ghost"
@@ -383,14 +399,18 @@ function IntegrationsSection({ tab }: { tab: "automation" | "abs" | "notificatio
                 className="btn-ghost"
                 onClick={async () => {
                   try {
+                    await save();
                     const r = await api.absMatch();
-                    setAbsMsg(`Matched ${r.matched} of ${r.checked} downloaded title(s).`);
+                    setAbsMsg(
+                      `Matched ${r.matched} of ${r.checked} title(s)` +
+                        (r.auto_excluded ? `, auto-excluded ${r.auto_excluded}.` : ".")
+                    );
                   } catch (e: any) {
                     setAbsMsg(e?.message || "Match failed");
                   }
                 }}
               >
-                Match downloaded books
+                Match library now
               </button>
               {absMsg && <span className="text-sm text-slate-400">{absMsg}</span>}
             </div>
