@@ -155,6 +155,30 @@ def test_last_admin_guards(env):
     assert c.delete(f"/api/users/{me['id']}").status_code == 422  # also self-delete
 
 
+def test_usernames_are_case_insensitive(env):
+    c, a1, _ = env
+    r = c.post("/api/users", json={"username": "RbacMixedCase", "password": "pw-for-case-tests",
+                                   "role": "member", "account_ids": [a1]})
+    assert r.status_code == 201, r.text
+    assert r.json()["username"] == "RbacMixedCase"  # stored casing kept for display
+
+    # Login works regardless of the casing typed…
+    c.post("/api/auth/logout")
+    c.cookies.clear()
+    for attempt in ("rbacmixedcase", "RBACMIXEDCASE", "RbacMixedCase"):
+        r = c.post("/api/auth/login", json={"username": attempt, "password": "pw-for-case-tests"})
+        assert r.status_code == 200, f"{attempt}: {r.text}"
+        assert r.json()["user"]["username"] == "RbacMixedCase"
+        c.post("/api/auth/logout")
+        c.cookies.clear()
+
+    # …and a duplicate that differs only by case is rejected.
+    c.post("/api/auth/login", json=ADMIN)
+    r = c.post("/api/users", json={"username": "rbacmixedcase", "password": "pw-for-case-tests2",
+                                   "role": "member"})
+    assert r.status_code == 409
+
+
 def test_update_grants_and_access(env):
     c, a1, a2 = env
     created = _create_member(c, [a1])

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.api.deps import current_user, db_session
@@ -163,7 +164,10 @@ def login(
     session: Session = Depends(db_session),
 ) -> LoginResult:
     _rate_limit_login(request)
-    user = session.exec(select(User).where(User.username == payload.username)).first()
+    # Usernames are case-insensitive (stored casing is display-only).
+    user = session.exec(
+        select(User).where(func.lower(User.username) == payload.username.strip().lower())
+    ).first()
     # Constant-ish work whether or not the user exists.
     if user is None or not verify_password(payload.password, user.password_hash):
         _record_login_attempt(request)

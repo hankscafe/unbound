@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.api.deps import db_session, require_admin
@@ -68,10 +69,14 @@ def create_user(
     session: Session = Depends(db_session),
     admin: User = Depends(require_admin),
 ) -> UserAdminOut:
-    if session.exec(select(User).where(User.username == payload.username)).first():
+    username = payload.username.strip()
+    # Usernames are case-insensitive: "Alice" and "alice" are the same account.
+    if session.exec(
+        select(User).where(func.lower(User.username) == username.lower())
+    ).first():
         raise HTTPException(status.HTTP_409_CONFLICT, "Username already exists")
     user = User(
-        username=payload.username,
+        username=username,
         email=payload.email,
         password_hash=hash_password(payload.password),
         role=UserRole(payload.role),

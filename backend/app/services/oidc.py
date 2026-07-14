@@ -198,12 +198,12 @@ def match_user(session: Session, claims: dict) -> User | None:
     local username. Unmatched identities are rejected — no auto-provisioning.
     """
     email = (claims.get("email") or "").strip().lower()
-    username = (claims.get("preferred_username") or "").strip()
+    username = (claims.get("preferred_username") or "").strip().lower()
     for user in session.exec(select(User)).all():
         if not user.is_active:
             continue
         if email and (user.email or "").strip().lower() == email:
             return user
-        if username and user.username == username:
+        if username and user.username.lower() == username:
             return user
     return None
