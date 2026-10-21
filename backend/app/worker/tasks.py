@@ -58,6 +58,20 @@ def _transient(exc: Exception) -> bool:
     return isinstance(exc, (httpx.TransportError, httpx.TimeoutException))
 
 
+def _license_hint(message: str) -> tuple[str, bool]:
+    """Append guidance to a license-denial message; returns (message, should_resync).
+
+    ``CustomerThrottled`` means Audible is rate-limiting the account's download
+    requests (common after bulk downloads; clears on its own, usually within
+    hours) — re-syncing won't help and only adds API traffic while throttled.
+    """
+    if "CustomerThrottled" in message:
+        return (message + " — Audible is temporarily rate-limiting this account's "
+                          "download requests. This usually clears within a few hours; "
+                          "retry later", False)
+    return (message + " — re-syncing the account to refresh its status", True)
+
+
 def _is_auth_error(exc: Exception) -> bool:
     """True only for genuine authentication failures (expired/revoked tokens).
 
@@ -420,10 +434,12 @@ def download_book(job_id: int) -> None:
             safe = _safe_error(exc)
             if isinstance(exc, ac.LicenseError):
                 # Audible refused the license (the message carries the denial
-                # reasons). Re-sync so the title's status and rights refresh.
-                safe = f"{safe} — re-syncing the account to refresh its status"
-                from app.worker.queue import enqueue
-                enqueue("sync_account", account_id=book.audible_account_id)
+                # reasons). Unless the account is throttled, re-sync so the
+                # title's status and rights refresh.
+                safe, should_resync = _license_hint(safe)
+                if should_resync:
+                    from app.worker.queue import enqueue
+                    enqueue("sync_account", account_id=book.audible_account_id)
             log.error("download_failed", asin=book.asin, error=safe)
             _set_state(session, job, JobState.failed, error_message=safe, finished_at=_utcnow())
             session.add(EventLog(level="error", category="job", job_id=job.id, book_id=book.id,

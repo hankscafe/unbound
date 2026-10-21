@@ -163,6 +163,17 @@ def test_denial_message_includes_structured_reasons():
     assert _denial_message({}, "X") == "License denied for X"
 
 
+def test_license_hint_detects_throttling():
+    msg = ("License not granted to customer [X] for asin [Y] "
+           "(denial reasons: CustomerThrottled / Ownership)")
+    out, resync = tasks._license_hint(msg)
+    assert resync is False
+    assert "rate-limiting" in out and "retry later" in out
+    # Any other denial still triggers the refresh sync.
+    out, resync = tasks._license_hint("License denied for Y")
+    assert resync is True and "re-syncing" in out
+
+
 def test_download_refused_when_rights_restricted(client):
     with Session(engine) as session:
         account_id = _account_id(session)

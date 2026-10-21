@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import secrets
 import tempfile
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -346,6 +348,24 @@ class DownloadLicense:
     raw: dict[str, Any]
 
 
+# Audible throttles accounts that fire many license requests in a short window
+# ("CustomerThrottled" denials, which block downloads for hours even for owned
+# titles). Space license requests out process-wide so bulk downloads stay under
+# the radar; a few seconds per title is noise next to the download itself.
+_LICENSE_MIN_INTERVAL_S = 3.0
+_license_pace_lock = threading.Lock()
+_last_license_request = 0.0
+
+
+def _pace_license_requests() -> None:
+    global _last_license_request
+    with _license_pace_lock:
+        wait = _LICENSE_MIN_INTERVAL_S - (time.monotonic() - _last_license_request)
+        if wait > 0:
+            time.sleep(wait)
+        _last_license_request = time.monotonic()
+
+
 # Headers Audible expects on a license request (mirrors audible-cli).
 _LICENSE_HEADERS = {
     "X-ADP-SW": "37801821",
@@ -394,6 +414,7 @@ def get_aaxc_license(
         "consumption_type": "Download",
         "response_groups": "last_position_heard, pdf_url, content_reference, chapter_info",
     }
+    _pace_license_requests()
     with audible.Client(auth=auth) as client:  # type: ignore[union-attr]
         resp = client.post(f"1.0/content/{asin}/licenserequest", body=body, headers=headers)
 
