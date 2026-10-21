@@ -283,6 +283,13 @@ def download_book(job_id: int) -> None:
                        error_message="Title is no longer in the Audible library — "
                                      "Audible will not grant a download license")
             return
+        if book.download_restricted:
+            _set_state(session, job, JobState.failed,
+                       error_message="Audible marks this title as not downloadable "
+                                     "(is_consumable_offline=false) — typically a streaming-only "
+                                     "Audible Plus title, or a purchase still processing. "
+                                     "If it was just bought, wait a few minutes, sync, and retry.")
+            return
         account = session.get(AudibleAccount, book.audible_account_id)
         if account is None or account.status != AccountStatus.linked:
             _set_state(session, job, JobState.failed, error_message="Account not linked")
@@ -412,10 +419,9 @@ def download_book(job_id: int) -> None:
         except Exception as exc:
             safe = _safe_error(exc)
             if isinstance(exc, ac.LicenseError):
-                # Audible refused the license — most often the title has left the
-                # library (returned/revoked). Re-sync so its status updates.
-                safe = (f"{safe} — the title may no longer be in the Audible library; "
-                        "re-syncing the account to check")
+                # Audible refused the license (the message carries the denial
+                # reasons). Re-sync so the title's status and rights refresh.
+                safe = f"{safe} — re-syncing the account to refresh its status"
                 from app.worker.queue import enqueue
                 enqueue("sync_account", account_id=book.audible_account_id)
             log.error("download_failed", asin=book.asin, error=safe)

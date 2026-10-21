@@ -70,6 +70,7 @@ def _to_out(session: Session, book: Book, accounts: dict[int, AudibleAccount]) -
         is_aax_available=book.is_aax_available,
         excluded=book.excluded,
         library_removed=book.library_removed,
+        download_restricted=book.download_restricted,
         purchase_date=book.purchase_date,
         audible_url=audible_product_url(book.asin, account.marketplace if account else "us"),
         abs_url=_abs_link(session, book) if (completed or book.abs_item_id) else None,
@@ -197,6 +198,10 @@ def _queue_download(session: Session, book: Book) -> DownloadJob | None:
                             f"'{book.title}' is no longer in the Audible library — "
                             "Audible will not grant a download license. "
                             "Re-sync the account if you believe this is stale.")
+    if book.download_restricted:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"Audible marks '{book.title}' as not downloadable (streaming-only, "
+                            "or a purchase still processing). Sync again later and retry.")
     account = session.get(AudibleAccount, book.audible_account_id)
     if account is None or account.status != AccountStatus.linked:
         raise HTTPException(status.HTTP_400_BAD_REQUEST,

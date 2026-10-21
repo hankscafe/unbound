@@ -356,6 +356,25 @@ _LICENSE_HEADERS = {
 }
 
 
+def _denial_message(cl: dict[str, Any], asin: str) -> str:
+    """Human-readable license denial: Audible's message plus the structured reasons.
+
+    A denial carries ``license_denial_reasons`` entries whose ``rejectionReason`` /
+    ``validationType`` say *why* (e.g. Ownership, Membership, GeographicalRestrictions)
+    — far more actionable than the generic "License not granted" message alone.
+    """
+    msg = cl.get("message") or f"License denied for {asin}"
+    reasons = []
+    for r in cl.get("license_denial_reasons") or []:
+        if isinstance(r, dict):
+            bits = [str(r[k]) for k in ("rejectionReason", "validationType") if r.get(k)]
+            if bits:
+                reasons.append(" / ".join(bits))
+    if reasons:
+        msg += f" (denial reasons: {'; '.join(reasons)})"
+    return msg
+
+
 def get_aaxc_license(
     auth: "audible.Authenticator", asin: str  # type: ignore[name-defined]
 ) -> DownloadLicense:
@@ -380,7 +399,7 @@ def get_aaxc_license(
 
     cl = (resp.get("content_license") or {}) if isinstance(resp, dict) else {}
     if cl.get("status_code") == "Denied":
-        raise LicenseError(cl.get("message") or f"License denied for {asin}")
+        raise LicenseError(_denial_message(cl, asin))
 
     meta = cl.get("content_metadata") or {}
     dl_url = (meta.get("content_url") or {}).get("offline_url", "")

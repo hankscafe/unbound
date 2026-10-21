@@ -146,6 +146,40 @@ def test_empty_fetch_is_not_a_mass_removal(client, monkeypatch):
         assert not _book(session, "SYNCGONE").library_removed
 
 
+def test_denial_message_includes_structured_reasons():
+    from app.audible.client import _denial_message
+
+    cl = {
+        "message": "License not granted to customer [X] for asin [B00BWQUFRE]",
+        "license_denial_reasons": [
+            {"rejectionReason": "OwnershipDenialReason", "validationType": "Ownership"},
+            {"validationType": "Membership"},
+        ],
+    }
+    out = _denial_message(cl, "B00BWQUFRE")
+    assert "License not granted" in out
+    assert "OwnershipDenialReason / Ownership" in out and "Membership" in out
+    # No reasons → just the message.
+    assert _denial_message({}, "X") == "License denied for X"
+
+
+def test_download_refused_when_rights_restricted(client):
+    with Session(engine) as session:
+        account_id = _account_id(session)
+        b = Book(audible_account_id=account_id, asin="SYNCPLUS", title="Streaming Only",
+                 raw_metadata={"customer_rights": {"is_consumable_offline": False}})
+        session.add(b)
+        session.commit()
+        session.refresh(b)
+        bid = b.id
+    r = client.post(f"/api/library/{bid}/download")
+    assert r.status_code == 400
+    assert "not downloadable" in r.json()["detail"]
+    r = client.get(f"/api/library/{bid}")
+    assert r.status_code == 200
+    assert r.json()["download_restricted"] is True
+
+
 def test_download_refused_for_removed_book(client, monkeypatch):
     monkeypatch.setattr(tasks.ac, "fetch_library",
                         lambda auth: [_item("SYNCKEEP", "Still Owned")])

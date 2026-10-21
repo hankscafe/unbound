@@ -148,6 +148,14 @@ class Book(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 
+    @property
+    def download_restricted(self) -> bool:
+        """Audible says this title cannot be consumed offline — a download license
+        would be denied (streaming-only Plus titles, orders still processing, …).
+        Derived from the ``customer_rights`` block captured at sync time."""
+        rights = (self.raw_metadata or {}).get("customer_rights") or {}
+        return rights.get("is_consumable_offline") is False
+
 
 class DownloadJob(SQLModel, table=True):
     __tablename__ = "download_jobs"

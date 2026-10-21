@@ -171,6 +171,7 @@ class BookOut(BaseModel):
     is_aax_available: bool
     excluded: bool
     library_removed: bool = False  # no longer in the Audible library (returned/revoked)
+    download_restricted: bool = False  # Audible: not consumable offline (streaming-only/pending)
     purchase_date: datetime | None = None
     audible_url: str | None = None
     abs_url: str | None = None  # "open in AudiobookShelf" link (matched/completed books)

@@ -83,6 +83,7 @@ export interface Book {
   is_aax_available: boolean;
   excluded: boolean;
   library_removed: boolean;
+  download_restricted: boolean;
   purchase_date: string | null;
   audible_url: string | null;
   abs_url: string | null;
