@@ -58,17 +58,29 @@ def _transient(exc: Exception) -> bool:
     return isinstance(exc, (httpx.TransportError, httpx.TimeoutException))
 
 
+# After a CustomerThrottled denial, hold off on ALL license requests for that
+# account for a cooldown: every further attempt can extend Audible's block
+# (see rmcrackan/Libation#2110 — blocks run 24-48h and retries prolong them).
+# In-memory on purpose: a restart clearing it is harmless.
+_THROTTLE_COOLDOWN_S = 3600.0
+_throttled_until: dict[int, float] = {}
+
+_THROTTLE_ADVICE = (
+    "Audible is rate-limiting this account's download requests. Blocks typically "
+    "clear in 24-48 hours and every retry can extend them, so Unbound will refuse "
+    "downloads for this account for the next hour. If it persists for days, "
+    "deregister stale devices in Amazon's device list and re-link the account."
+)
+
+
 def _license_hint(message: str) -> tuple[str, bool]:
     """Append guidance to a license-denial message; returns (message, should_resync).
 
     ``CustomerThrottled`` means Audible is rate-limiting the account's download
-    requests (common after bulk downloads; clears on its own, usually within
-    hours) — re-syncing won't help and only adds API traffic while throttled.
+    requests — re-syncing won't help and only adds API traffic while throttled.
     """
     if "CustomerThrottled" in message:
-        return (message + " — Audible is temporarily rate-limiting this account's "
-                          "download requests. This usually clears within a few hours; "
-                          "retry later", False)
+        return (f"{message} — {_THROTTLE_ADVICE}", False)
     return (message + " — re-syncing the account to refresh its status", True)
 
 
@@ -308,6 +320,11 @@ def download_book(job_id: int) -> None:
         if account is None or account.status != AccountStatus.linked:
             _set_state(session, job, JobState.failed, error_message="Account not linked")
             return
+        if time.monotonic() < _throttled_until.get(account.id, 0.0):
+            # Audible recently throttled this account; don't add fuel to the fire.
+            _set_state(session, job, JobState.failed,
+                       error_message=f"Skipped without contacting Audible: {_THROTTLE_ADVICE}")
+            return
         profile = _select_profile(session, book)
         if profile is None:
             _set_state(session, job, JobState.failed,
@@ -436,6 +453,13 @@ def download_book(job_id: int) -> None:
                 # Audible refused the license (the message carries the denial
                 # reasons). Unless the account is throttled, re-sync so the
                 # title's status and rights refresh.
+                if "CustomerThrottled" in safe:
+                    _throttled_until[book.audible_account_id] = (
+                        time.monotonic() + _THROTTLE_COOLDOWN_S
+                    )
+                    log.warning("account_throttled_cooldown",
+                                account_id=book.audible_account_id,
+                                cooldown_s=_THROTTLE_COOLDOWN_S)
                 safe, should_resync = _license_hint(safe)
                 if should_resync:
                     from app.worker.queue import enqueue

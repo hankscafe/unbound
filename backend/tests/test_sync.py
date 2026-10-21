@@ -168,10 +168,35 @@ def test_license_hint_detects_throttling():
            "(denial reasons: CustomerThrottled / Ownership)")
     out, resync = tasks._license_hint(msg)
     assert resync is False
-    assert "rate-limiting" in out and "retry later" in out
+    assert "rate-limiting" in out and "24-48 hours" in out
     # Any other denial still triggers the refresh sync.
     out, resync = tasks._license_hint("License denied for Y")
     assert resync is True and "re-syncing" in out
+
+
+def test_throttle_cooldown_blocks_downloads_locally(client, monkeypatch):
+    import time as time_mod
+
+    from app.db.models import DownloadJob, JobState
+
+    monkeypatch.setattr(tasks.network, "ensure_online", lambda: True)
+    # Audible must never be contacted while the account is cooling down.
+    monkeypatch.setattr(tasks.ac, "get_aaxc_license",
+                        lambda *a, **k: pytest.fail("license requested during cooldown"))
+    with Session(engine) as session:
+        account_id = _account_id(session)
+        book_id = _book(session, "SYNCKEEP").id
+        job = DownloadJob(book_id=book_id, state=JobState.queued)
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        job_id = job.id
+    monkeypatch.setitem(tasks._throttled_until, account_id, time_mod.monotonic() + 600)
+    tasks.download_book(job_id)
+    with Session(engine) as session:
+        job = session.get(DownloadJob, job_id)
+        assert job.state == JobState.failed
+        assert "Skipped without contacting Audible" in job.error_message
 
 
 def test_download_refused_when_rights_restricted(client):
