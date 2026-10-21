@@ -143,6 +143,12 @@ def sync_account(account_id: int) -> None:
             if book is None:
                 book = Book(audible_account_id=account_id, asin=item.asin, title=item.title)
                 added += 1
+            if book.library_removed:
+                # The title is back (re-purchased, return reversed, …) — clear the flag.
+                book.library_removed = False
+                book.library_removed_at = None
+                session.add(EventLog(category="library", account_id=account_id, book_id=book.id,
+                                     message=f"Back in Audible library: {book.title}"))
             book.title = item.title
             book.subtitle = item.subtitle
             book.authors = item.authors
@@ -156,16 +162,40 @@ def sync_account(account_id: int) -> None:
             book.updated_at = _utcnow()
             session.add(book)
 
+        # Flag books Audible no longer returns: they were returned/revoked/removed,
+        # and Audible will refuse download licenses for them. An empty result with
+        # a non-empty local library is treated as a bad fetch, not a mass removal.
+        removed = 0
+        if items:
+            fetched_asins = {item.asin for item in items}
+            for asin, book in existing.items():
+                if asin in fetched_asins or book.library_removed:
+                    continue
+                book.library_removed = True
+                book.library_removed_at = _utcnow()
+                book.updated_at = _utcnow()
+                session.add(book)
+                session.add(EventLog(level="warning", category="library",
+                                     account_id=account_id, book_id=book.id,
+                                     message=f"No longer in Audible library: {book.title} "
+                                             f"({book.asin}) — downloads will be refused"))
+                removed += 1
+                log.warning("book_removed_from_library", account_id=account_id,
+                            asin=book.asin, title=book.title)
+
         account.last_sync_at = _utcnow()
         account.last_error = None
         account.status = AccountStatus.linked  # a successful sync clears any prior error state
         session.add(account)
-        session.add(EventLog(category="account", account_id=account_id,
-                             message=f"Sync complete: {len(items)} items ({added} new)"))
+        summary = f"Sync complete: {len(items)} items ({added} new)"
+        if removed:
+            summary += f", {removed} no longer in library"
+        session.add(EventLog(category="account", account_id=account_id, message=summary))
         session.commit()
         events.publish({"type": "sync_complete", "account_id": account_id, "count": len(items)})
         events.publish({"type": "account", "account_id": account_id, "status": account.status.value})
-        log.info("sync_complete", account_id=account_id, count=len(items), added=added)
+        log.info("sync_complete", account_id=account_id, count=len(items), added=added,
+                 removed=removed)
         if added:
             notifier.send_if_enabled(
                 init_db.SETTING_NOTIFY_NEW_BOOKS,
@@ -247,6 +277,11 @@ def download_book(job_id: int) -> None:
             return
         if book.excluded:
             _set_state(session, job, JobState.excluded)
+            return
+        if book.library_removed:
+            _set_state(session, job, JobState.failed,
+                       error_message="Title is no longer in the Audible library — "
+                                     "Audible will not grant a download license")
             return
         account = session.get(AudibleAccount, book.audible_account_id)
         if account is None or account.status != AccountStatus.linked:
@@ -359,6 +394,11 @@ def download_book(job_id: int) -> None:
                     except OSError:
                         pass
 
+            if book.abs_missing:
+                # The files are back in the library; ABS will re-import on its next
+                # scan and the matcher will restore the deep link.
+                book.abs_missing = False
+                session.add(book)
             _set_state(session, job, JobState.completed, progress=100.0,
                        output_path=str(final), finished_at=_utcnow(), library_profile_id=profile.id)
             session.add(EventLog(category="job", job_id=job.id, book_id=book.id,
@@ -371,6 +411,13 @@ def download_book(job_id: int) -> None:
 
         except Exception as exc:
             safe = _safe_error(exc)
+            if isinstance(exc, ac.LicenseError):
+                # Audible refused the license — most often the title has left the
+                # library (returned/revoked). Re-sync so its status updates.
+                safe = (f"{safe} — the title may no longer be in the Audible library; "
+                        "re-syncing the account to check")
+                from app.worker.queue import enqueue
+                enqueue("sync_account", account_id=book.audible_account_id)
             log.error("download_failed", asin=book.asin, error=safe)
             _set_state(session, job, JobState.failed, error_message=safe, finished_at=_utcnow())
             session.add(EventLog(level="error", category="job", job_id=job.id, book_id=book.id,

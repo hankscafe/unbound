@@ -1,0 +1,163 @@
+"""Library sync removal detection — offline (Audible API mocked).
+
+Covers: a book Audible stops returning is flagged library_removed (with an event
+for admins); it reappearing clears the flag; an empty fetch is treated as a bad
+response, not a mass removal; downloads of removed books are refused with a clear
+error; the flag surfaces through the library API.
+
+Shares the app DB with the other test modules; cleans up everything it creates.
+"""
+
+from __future__ import annotations
+
+import os
+import tempfile
+from pathlib import Path
+
+_tmp = Path(tempfile.mkdtemp(prefix="unbound-test-"))
+os.environ.setdefault("UNBOUND_DATA_DIR", str(_tmp))
+os.environ.setdefault("UNBOUND_DATABASE_URL", f"sqlite:///{_tmp / 'test.db'}")
+os.environ.setdefault("UNBOUND_SECRET_KEY", "test-master-secret-key-value-1234567890")
+os.environ.setdefault("UNBOUND_COOKIE_SECURE", "false")
+
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from sqlmodel import Session, col, select  # noqa: E402
+
+from app.audible.client import LibraryItem  # noqa: E402
+from app.core.security import hash_password  # noqa: E402
+from app.db.models import (  # noqa: E402
+    AccountStatus,
+    AudibleAccount,
+    Book,
+    DownloadJob,
+    EventLog,
+    User,
+    UserRole,
+)
+from app.db.session import engine  # noqa: E402
+from app.main import app  # noqa: E402
+from app.worker import tasks  # noqa: E402
+
+
+def _item(asin: str, title: str) -> LibraryItem:
+    return LibraryItem(
+        asin=asin, title=title, subtitle=None, authors="Author", narrators=None,
+        series=None, series_sequence=None, runtime_minutes=60, cover_url=None,
+        purchase_date=None, is_aax_available=False, raw={},
+    )
+
+
+@pytest.fixture()
+def client(monkeypatch):
+    # Sync must not need real auth material.
+    monkeypatch.setattr(tasks.account_svc, "load_authenticator", lambda account: object())
+    with TestClient(app) as c:
+        with Session(engine) as session:
+            session.add(
+                User(username="syncuser", email="sync@example.com",
+                     password_hash=hash_password("pw-for-sync-tests"), role=UserRole.admin)
+            )
+            account = AudibleAccount(label="Sync Test", status=AccountStatus.linked,
+                                     encrypted_auth_blob="blob")
+            session.add(account)
+            session.commit()
+            session.refresh(account)
+            books = [
+                Book(audible_account_id=account.id, asin="SYNCKEEP", title="Still Owned"),
+                Book(audible_account_id=account.id, asin="SYNCGONE", title="Removed Title"),
+            ]
+            session.add_all(books)
+            session.commit()
+        c.post("/api/auth/login", json={"username": "syncuser", "password": "pw-for-sync-tests"})
+        yield c
+    with Session(engine) as session:
+        account = session.exec(
+            select(AudibleAccount).where(AudibleAccount.label == "Sync Test")
+        ).first()
+        if account:
+            books = session.exec(
+                select(Book).where(Book.audible_account_id == account.id)
+            ).all()
+            for b in books:
+                for j in session.exec(select(DownloadJob).where(DownloadJob.book_id == b.id)):
+                    session.delete(j)
+                session.delete(b)
+            session.delete(account)
+        for e in session.exec(select(EventLog).where(col(EventLog.message).contains("SYNC"))):
+            session.delete(e)
+        user = session.exec(select(User).where(User.username == "syncuser")).first()
+        if user:
+            session.delete(user)
+        session.commit()
+
+
+def _account_id(session: Session) -> int:
+    return session.exec(
+        select(AudibleAccount).where(AudibleAccount.label == "Sync Test")
+    ).one().id
+
+
+def _book(session: Session, asin: str) -> Book:
+    return session.exec(select(Book).where(Book.asin == asin)).one()
+
+
+def test_sync_flags_removed_books(client, monkeypatch):
+    monkeypatch.setattr(tasks.ac, "fetch_library",
+                        lambda auth: [_item("SYNCKEEP", "Still Owned")])
+    with Session(engine) as session:
+        account_id = _account_id(session)
+    tasks.sync_account(account_id)
+    with Session(engine) as session:
+        gone = _book(session, "SYNCGONE")
+        kept = _book(session, "SYNCKEEP")
+        assert gone.library_removed and gone.library_removed_at is not None
+        assert not kept.library_removed
+        # Admins get a warning event naming the title.
+        ev = session.exec(
+            select(EventLog).where(col(EventLog.message).contains("SYNCGONE"))
+        ).first()
+        assert ev is not None and ev.level == "warning"
+
+
+def test_sync_clears_flag_when_book_returns(client, monkeypatch):
+    monkeypatch.setattr(tasks.ac, "fetch_library",
+                        lambda auth: [_item("SYNCKEEP", "Still Owned")])
+    with Session(engine) as session:
+        account_id = _account_id(session)
+    tasks.sync_account(account_id)
+    monkeypatch.setattr(
+        tasks.ac, "fetch_library",
+        lambda auth: [_item("SYNCKEEP", "Still Owned"), _item("SYNCGONE", "Removed Title")],
+    )
+    tasks.sync_account(account_id)
+    with Session(engine) as session:
+        gone = _book(session, "SYNCGONE")
+        assert not gone.library_removed and gone.library_removed_at is None
+
+
+def test_empty_fetch_is_not_a_mass_removal(client, monkeypatch):
+    monkeypatch.setattr(tasks.ac, "fetch_library", lambda auth: [])
+    with Session(engine) as session:
+        account_id = _account_id(session)
+    tasks.sync_account(account_id)
+    with Session(engine) as session:
+        assert not _book(session, "SYNCKEEP").library_removed
+        assert not _book(session, "SYNCGONE").library_removed
+
+
+def test_download_refused_for_removed_book(client, monkeypatch):
+    monkeypatch.setattr(tasks.ac, "fetch_library",
+                        lambda auth: [_item("SYNCKEEP", "Still Owned")])
+    with Session(engine) as session:
+        account_id = _account_id(session)
+    tasks.sync_account(account_id)
+    with Session(engine) as session:
+        gone_id = _book(session, "SYNCGONE").id
+    r = client.post(f"/api/library/{gone_id}/download")
+    assert r.status_code == 400
+    assert "no longer in the Audible library" in r.json()["detail"]
+    # And the flag is visible to the UI.
+    r = client.get(f"/api/library/{gone_id}")
+    assert r.status_code == 200
+    assert r.json()["library_removed"] is True

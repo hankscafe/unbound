@@ -113,6 +113,23 @@ def resolve_item_id(base: str, token: str, book: Book, library_id: str | None = 
     return None
 
 
+def fetch_all_item_ids(base: str, token: str) -> set[str]:
+    """Every library item id across ABS book libraries (one request per library).
+
+    Used to verify that previously matched items still exist. ``limit=0`` asks
+    ABS for all items; ``minified=1`` keeps the payload small.
+    """
+    ids: set[str] = set()
+    with _client(base, token, timeout=30.0) as c:
+        for lib in list_libraries(base, token):
+            if lib.get("mediaType") != "book":
+                continue
+            r = c.get(f"/api/libraries/{lib['id']}/items", params={"limit": 0, "minified": 1})
+            r.raise_for_status()
+            ids.update(i["id"] for i in r.json().get("results", []) if i.get("id"))
+    return ids
+
+
 def item_url(base: str, item_id: str) -> str:
     return f"{base.rstrip('/')}/item/{item_id}"
 
@@ -143,12 +160,52 @@ def match_all(session: Session, rematch: bool = False) -> dict:
 
     base, token, library_id = get_config(session)
     if not base or not token:
-        return {"configured": False, "checked": 0, "matched": 0, "auto_excluded": 0}
+        return {"configured": False, "checked": 0, "matched": 0,
+                "auto_excluded": 0, "missing": 0}
 
     completed = {
         j.book_id
         for j in session.exec(select(DownloadJob).where(DownloadJob.state == JobState.completed)).all()
     }
+
+    # Verify previously matched items still exist in ABS. A vanished item means
+    # the files were deleted (or the item removed) since we last looked: flag our
+    # own downloads as missing so admins can re-download, and lift auto-exclusions
+    # that no longer hold. An empty id set with matches on record is treated as a
+    # bad fetch, not a wiped library.
+    missing = 0
+    matched_books = session.exec(
+        select(Book).where(Book.abs_item_id != None)  # noqa: E711
+    ).all()
+    if matched_books:
+        try:
+            existing_ids: set[str] | None = fetch_all_item_ids(base, token)
+        except Exception as exc:  # pragma: no cover - network
+            existing_ids = None
+            log.warning("abs_items_fetch_failed", error=str(exc))
+        if existing_ids:
+            for book in matched_books:
+                if book.abs_item_id in existing_ids:
+                    continue
+                book.abs_item_id = None
+                if book.id in completed and not book.abs_missing:
+                    book.abs_missing = True
+                    missing += 1
+                    session.add(EventLog(
+                        level="warning", category="library", book_id=book.id,
+                        message=f"Missing from AudiobookShelf: {book.title} ({book.asin}) "
+                                "— previously downloaded, but the item is gone. "
+                                "Re-download it to restore it."))
+                    log.warning("abs_item_missing", asin=book.asin, title=book.title)
+                if book.abs_auto_excluded:
+                    # It was skipped because ABS already had it; that no longer holds.
+                    book.excluded = False
+                    book.abs_auto_excluded = False
+                    session.add(EventLog(
+                        category="library", book_id=book.id,
+                        message=f"Re-included (no longer in AudiobookShelf): {book.title}"))
+                session.add(book)
+
     auto_exclude = init_db.get_bool(session, init_db.SETTING_ABS_AUTO_EXCLUDE)
     checked = matched = auto_excluded = 0
     for book in session.exec(select(Book)).all():
@@ -162,6 +219,11 @@ def match_all(session: Session, rematch: bool = False) -> dict:
             continue
         if item_id:
             book.abs_item_id = item_id
+            if book.abs_missing:
+                # The item is back (re-imported or rescanned) — clear the flag.
+                book.abs_missing = False
+                session.add(EventLog(category="library", book_id=book.id,
+                                     message=f"Back in AudiobookShelf: {book.title}"))
             session.add(book)
             matched += 1
             if (
@@ -177,5 +239,7 @@ def match_all(session: Session, rematch: bool = False) -> dict:
         session.add(EventLog(category="library",
                              message=f"Auto-excluded {auto_excluded} title(s) already in AudiobookShelf"))
     session.commit()
-    log.info("abs_match_complete", checked=checked, matched=matched, auto_excluded=auto_excluded)
-    return {"configured": True, "checked": checked, "matched": matched, "auto_excluded": auto_excluded}
+    log.info("abs_match_complete", checked=checked, matched=matched,
+             auto_excluded=auto_excluded, missing=missing)
+    return {"configured": True, "checked": checked, "matched": matched,
+            "auto_excluded": auto_excluded, "missing": missing}

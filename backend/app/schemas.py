@@ -170,11 +170,13 @@ class BookOut(BaseModel):
     cover_url: str | None
     is_aax_available: bool
     excluded: bool
+    library_removed: bool = False  # no longer in the Audible library (returned/revoked)
     purchase_date: datetime | None = None
     audible_url: str | None = None
     abs_url: str | None = None  # "open in AudiobookShelf" link (matched/completed books)
     abs_present: bool = False  # the title already exists in AudiobookShelf
     abs_auto_excluded: bool = False  # we auto-excluded it because ABS already has it
+    abs_missing: bool = False  # downloaded before, but since vanished from ABS
     output_path: str | None = None
     job_state: str | None = None
     job_progress: float | None = None

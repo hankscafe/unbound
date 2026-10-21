@@ -424,7 +424,9 @@ function IntegrationsSection({ tab }: { tab: "automation" | "abs" | "notificatio
                     const r = await api.absMatch();
                     setAbsMsg(
                       `Matched ${r.matched} of ${r.checked} title(s)` +
-                        (r.auto_excluded ? `, auto-excluded ${r.auto_excluded}.` : ".")
+                        (r.auto_excluded ? `, auto-excluded ${r.auto_excluded}` : "") +
+                        (r.missing ? `, ${r.missing} missing from ABS` : "") +
+                        "."
                     );
                   } catch (e: any) {
                     setAbsMsg(e?.message || "Match failed");

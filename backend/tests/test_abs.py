@@ -26,6 +26,7 @@ from sqlmodel import Session, col, select  # noqa: E402
 from app.core.security import hash_password  # noqa: E402
 from app.db import init_db  # noqa: E402
 from app.db.models import (  # noqa: E402
+    AccountStatus,
     AppSetting,
     AudibleAccount,
     Book,
@@ -43,12 +44,16 @@ from app.services import audiobookshelf as abs_svc  # noqa: E402
 IN_ABS = {"ASINABS1", "ASINABS2"}
 
 
+def _resolve_mock(base, token, book, library_id=None):
+    return f"item-{book.asin}" if book.asin in IN_ABS else None
+
+
 @pytest.fixture()
 def client(monkeypatch):
+    monkeypatch.setattr(abs_svc, "resolve_item_id", _resolve_mock)
+    # All matched items exist in ABS unless a test says otherwise.
     monkeypatch.setattr(
-        abs_svc,
-        "resolve_item_id",
-        lambda base, token, book, library_id=None: f"item-{book.asin}" if book.asin in IN_ABS else None,
+        abs_svc, "fetch_all_item_ids", lambda base, token: {f"item-{a}" for a in IN_ABS}
     )
     with TestClient(app) as c:
         with Session(engine) as session:
@@ -56,7 +61,7 @@ def client(monkeypatch):
                 User(username="absuser", email="abs@example.com",
                      password_hash=hash_password("pw-for-abs-tests"), role=UserRole.admin)
             )
-            account = AudibleAccount(label="ABS Test")
+            account = AudibleAccount(label="ABS Test", status=AccountStatus.linked)
             session.add(account)
             session.commit()
             session.refresh(account)
@@ -144,3 +149,76 @@ def test_auto_exclude_respects_setting_off(client):
     already = _book(client, "ASINABS1")
     assert already["abs_present"] is True  # badge yes
     assert already["excluded"] is False  # exclusion no
+
+
+def test_batch_routes_not_shadowed_by_book_id(client):
+    # Regression: /batch/* must not be captured by the /{book_id}/* routes.
+    b = _book(client, "ASINNEW1")
+    r = client.post("/api/library/batch/exclude", json={"book_ids": [b["id"]], "excluded": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["updated"] == 1
+    client.post("/api/library/batch/exclude", json={"book_ids": [b["id"]], "excluded": False})
+
+
+def test_vanished_item_flags_our_download_missing(client, monkeypatch):
+    client.post("/api/library/abs-match")
+    # ASINABS2 (our completed download) disappears from ABS; nothing re-matches.
+    monkeypatch.setattr(abs_svc, "fetch_all_item_ids", lambda base, token: {"item-ASINABS1"})
+    monkeypatch.setattr(abs_svc, "resolve_item_id", lambda *a, **k: None)
+    r = client.post("/api/library/abs-match")
+    assert r.status_code == 200
+    assert r.json()["missing"] == 1
+
+    ours = _book(client, "ASINABS2")
+    assert ours["abs_missing"] is True
+    assert ours["abs_present"] is False  # stale deep link dropped
+    # Admins get a warning event naming the title.
+    with Session(engine) as session:
+        ev = session.exec(
+            select(EventLog).where(col(EventLog.message).contains("Missing from AudiobookShelf"))
+        ).first()
+        assert ev is not None and ev.level == "warning"
+
+    # Despite its completed job, the missing book can be re-queued in bulk.
+    import app.api.routers.library as library_router
+
+    queued: list[dict] = []
+    monkeypatch.setattr(library_router, "enqueue", lambda name, **kw: queued.append(kw))
+    r = client.post("/api/library/batch/download", json={"book_ids": [ours["id"]]})
+    assert r.status_code == 202, r.text
+    assert r.json()["queued"] == 1 and len(queued) == 1
+
+
+def test_vanished_item_lifts_auto_exclusion(client, monkeypatch):
+    client.post("/api/library/abs-match")  # auto-excludes ASINABS1 (not ours)
+    monkeypatch.setattr(abs_svc, "fetch_all_item_ids", lambda base, token: {"item-ASINABS2"})
+    monkeypatch.setattr(abs_svc, "resolve_item_id", lambda *a, **k: None)
+    client.post("/api/library/abs-match")
+    b = _book(client, "ASINABS1")
+    assert b["excluded"] is False and b["abs_auto_excluded"] is False
+    assert b["abs_missing"] is False  # we never downloaded it, so it is not "missing"
+
+
+def test_empty_abs_item_list_is_not_a_mass_removal(client, monkeypatch):
+    client.post("/api/library/abs-match")
+    monkeypatch.setattr(abs_svc, "fetch_all_item_ids", lambda base, token: set())
+    client.post("/api/library/abs-match")
+    ours = _book(client, "ASINABS2")
+    assert ours["abs_missing"] is False and ours["abs_present"] is True
+
+
+def test_item_reappearing_clears_missing(client, monkeypatch):
+    client.post("/api/library/abs-match")
+    monkeypatch.setattr(abs_svc, "fetch_all_item_ids", lambda base, token: {"item-ASINABS1"})
+    monkeypatch.setattr(abs_svc, "resolve_item_id", lambda *a, **k: None)
+    client.post("/api/library/abs-match")
+    assert _book(client, "ASINABS2")["abs_missing"] is True
+
+    # The item comes back (re-imported / rescanned) — the flag clears.
+    monkeypatch.setattr(
+        abs_svc, "fetch_all_item_ids", lambda base, token: {f"item-{a}" for a in IN_ABS}
+    )
+    monkeypatch.setattr(abs_svc, "resolve_item_id", _resolve_mock)
+    client.post("/api/library/abs-match")
+    ours = _book(client, "ASINABS2")
+    assert ours["abs_missing"] is False and ours["abs_present"] is True

@@ -133,10 +133,17 @@ class Book(SQLModel, table=True):
     purchase_date: datetime | None = None
     is_aax_available: bool = False  # AAX (activation-bytes) fallback offered by Audible
     excluded: bool = Field(default=False, index=True)  # admin toggle: never download
+    # No longer returned by the Audible library API (returned/revoked/removed).
+    # Audible refuses download licenses for these; sync keeps the flag current.
+    library_removed: bool = Field(default=False, index=True)
+    library_removed_at: datetime | None = None
     abs_item_id: str | None = None  # resolved AudiobookShelf library item id (deep-link)
     # Auto-skip when the title already exists in AudiobookShelf (not downloaded by us):
     abs_auto_excluded: bool = False  # we auto-excluded it because ABS already has it
     abs_exclude_override: bool = False  # admin re-included it — never auto-exclude again
+    # Downloaded by us, but the item has since vanished from AudiobookShelf
+    # (files deleted / item removed). Cleared when it is matched again or re-downloaded.
+    abs_missing: bool = False
     raw_metadata: dict | None = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)

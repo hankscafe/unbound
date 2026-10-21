@@ -75,6 +75,8 @@ function BookModal({
           ) : (
             <StatusPill status="pending" />
           )}
+          {book.library_removed && <MissingBadge />}
+          {book.abs_missing && <AbsMissingBadge />}
           {book.abs_present && <AbsBadge auto={book.abs_auto_excluded} />}
         </div>
 
@@ -101,7 +103,7 @@ function BookModal({
               <button className="btn-ghost whitespace-nowrap" onClick={() => onExclude(book)}>
                 {book.excluded ? "Include" : "Exclude"}
               </button>
-              {!book.excluded && (
+              {!book.excluded && !book.library_removed && (
                 <button className="btn-primary whitespace-nowrap" onClick={() => onDownload(book)}>
                   Download
                 </button>
@@ -126,6 +128,32 @@ function Row({ label, value }: { label: string; value: string | null }) {
 
 const ACTIVE_STATES = ["queued", "downloading", "downloaded", "decrypting", "tagging", "moving"];
 
+// Badge for titles Audible no longer returns in the library (returned/revoked/
+// removed) — downloads are refused for these.
+function MissingBadge() {
+  return (
+    <span
+      className="pill bg-rose-500/15 text-rose-400"
+      title="This title is no longer in the Audible library, so Audible refuses download licenses for it. If it comes back (e.g. re-purchased), a sync will clear this."
+    >
+      Not on Audible
+    </span>
+  );
+}
+
+// Badge for titles we downloaded that have since vanished from AudiobookShelf
+// (files deleted / item removed) — re-download to restore them.
+function AbsMissingBadge() {
+  return (
+    <span
+      className="pill bg-amber-500/15 text-amber-400"
+      title="This title was downloaded before, but it is no longer in AudiobookShelf. Re-download it to restore it."
+    >
+      Missing from ABS
+    </span>
+  );
+}
+
 // Small badge for titles that already exist in AudiobookShelf.
 function AbsBadge({ auto }: { auto?: boolean }) {
   return (
@@ -142,8 +170,9 @@ function AbsBadge({ auto }: { auto?: boolean }) {
   );
 }
 
-function bookStatus(b: Book): "excluded" | "downloaded" | "in_progress" | "failed" | "pending" {
+function bookStatus(b: Book): "excluded" | "missing" | "downloaded" | "in_progress" | "failed" | "pending" {
   if (b.excluded) return "excluded";
+  if (b.library_removed || b.abs_missing) return "missing";
   if (b.job_state === "completed") return "downloaded";
   if (b.job_state && ACTIVE_STATES.includes(b.job_state)) return "in_progress";
   if (b.job_state === "failed") return "failed";
@@ -202,12 +231,16 @@ function BookRow({
         {b.excluded ? (
           <div className="flex flex-wrap items-center gap-1.5">
             <StatusPill status="excluded" />
+            {b.library_removed && <MissingBadge />}
+            {b.abs_missing && <AbsMissingBadge />}
             {b.abs_present && <AbsBadge auto={b.abs_auto_excluded} />}
           </div>
         ) : b.job_state ? (
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <StatusPill status={b.job_state} />
+              {b.library_removed && <MissingBadge />}
+              {b.abs_missing && <AbsMissingBadge />}
               {b.job_progress != null && b.job_progress > 0 && b.job_progress < 100 && (
                 <span className="text-xs tabular-nums text-audible-400">
                   {Math.round(b.job_progress)}%
@@ -226,6 +259,8 @@ function BookRow({
         ) : (
           <div className="flex flex-wrap items-center gap-1.5">
             <StatusPill status="pending" />
+            {b.library_removed && <MissingBadge />}
+            {b.abs_missing && <AbsMissingBadge />}
             {b.abs_present && <AbsBadge />}
           </div>
         )}
@@ -236,7 +271,7 @@ function BookRow({
             <button className="btn-ghost !px-2 !py-1 text-xs" onClick={onExclude}>
               {b.excluded ? "Include" : "Exclude"}
             </button>
-            {!b.excluded && (
+            {!b.excluded && !b.library_removed && (
               <button className="btn-primary !px-2 !py-1 text-xs" onClick={onDownload}>
                 Download
               </button>
@@ -387,6 +422,7 @@ export default function Library() {
           <option value="in_progress">In progress</option>
           <option value="failed">Failed</option>
           <option value="excluded">Excluded</option>
+          <option value="missing">Missing</option>
         </select>
         <label className="flex select-none items-center gap-2 whitespace-nowrap text-sm text-slate-400">
           <input

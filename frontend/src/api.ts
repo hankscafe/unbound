@@ -82,11 +82,13 @@ export interface Book {
   cover_url: string | null;
   is_aax_available: boolean;
   excluded: boolean;
+  library_removed: boolean;
   purchase_date: string | null;
   audible_url: string | null;
   abs_url: string | null;
   abs_present: boolean;
   abs_auto_excluded: boolean;
+  abs_missing: boolean;
   output_path: string | null;
   job_state: string | null;
   job_progress: number | null;
@@ -290,7 +292,7 @@ export const api = {
   batchDownload: (book_ids: number[]) =>
     req<{ queued: number }>(`/library/batch/download`, { method: "POST", ...body({ book_ids }) }),
   absMatch: () =>
-    req<{ checked: number; matched: number; auto_excluded: number }>(`/library/abs-match`, {
+    req<{ checked: number; matched: number; auto_excluded: number; missing: number }>(`/library/abs-match`, {
       method: "POST",
     }),
 

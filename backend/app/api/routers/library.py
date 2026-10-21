@@ -69,11 +69,13 @@ def _to_out(session: Session, book: Book, accounts: dict[int, AudibleAccount]) -
         cover_url=book.cover_url,
         is_aax_available=book.is_aax_available,
         excluded=book.excluded,
+        library_removed=book.library_removed,
         purchase_date=book.purchase_date,
         audible_url=audible_product_url(book.asin, account.marketplace if account else "us"),
         abs_url=_abs_link(session, book) if (completed or book.abs_item_id) else None,
         abs_present=book.abs_item_id is not None,
         abs_auto_excluded=book.abs_auto_excluded,
+        abs_missing=book.abs_missing,
         output_path=job.output_path if completed else None,
         job_state=job.state.value if job else None,
         job_progress=job.progress if job else None,
@@ -108,6 +110,42 @@ def list_library(
     books = session.exec(stmt).all()
     accounts = {a.id: a for a in session.exec(select(AudibleAccount)).all()}
     return [_to_out(session, b, accounts) for b in books]
+
+
+# NOTE: the /batch/* routes must be registered before the /{book_id}/* routes —
+# otherwise FastAPI matches "batch" as a book_id and returns 422.
+@router.post("/batch/exclude", dependencies=admin_only)
+def batch_exclude(payload: BatchExclude, session: Session = Depends(db_session)) -> dict:
+    updated = 0
+    for bid in payload.book_ids:
+        book = session.get(Book, bid)
+        if book is not None and book.excluded != payload.excluded:
+            _apply_exclude(book, payload.excluded)
+            session.add(book)
+            updated += 1
+    if updated:
+        verb = "Excluded" if payload.excluded else "Included"
+        session.add(EventLog(category="library", message=f"{verb} {updated} title(s) (bulk)"))
+    session.commit()
+    return {"updated": updated}
+
+
+@router.post("/batch/download", status_code=status.HTTP_202_ACCEPTED, dependencies=admin_only)
+def batch_download(payload: BatchDownload, session: Session = Depends(db_session)) -> dict:
+    queued = 0
+    for bid in payload.book_ids:
+        book = session.get(Book, bid)
+        if book is None or book.excluded:
+            continue
+        latest = _latest_job(session, bid)
+        if latest and latest.state == JobState.completed and not book.abs_missing:
+            continue
+        try:
+            if _queue_download(session, book):
+                queued += 1
+        except HTTPException:
+            continue
+    return {"queued": queued}
 
 
 @router.get("/{book_id}", response_model=BookOut)
@@ -154,6 +192,11 @@ def _apply_exclude(book: Book, excluded: bool) -> None:
 def _queue_download(session: Session, book: Book) -> DownloadJob | None:
     if book.excluded:
         return None
+    if book.library_removed:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"'{book.title}' is no longer in the Audible library — "
+                            "Audible will not grant a download license. "
+                            "Re-sync the account if you believe this is stale.")
     account = session.get(AudibleAccount, book.audible_account_id)
     if account is None or account.status != AccountStatus.linked:
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
@@ -182,14 +225,16 @@ def download_all(
     session: Session = Depends(db_session), account_id: int | None = None
 ) -> dict:
     stmt = select(Book).where(Book.excluded == False)  # noqa: E712
+    stmt = stmt.where(Book.library_removed == False)  # noqa: E712
     if account_id is not None:
         stmt = stmt.where(Book.audible_account_id == account_id)
     books = session.exec(stmt).all()
     queued = 0
     for book in books:
-        # Skip books already completed.
+        # Skip books already completed — unless the files have since vanished
+        # from AudiobookShelf (abs_missing): those are pending again.
         latest = _latest_job(session, book.id)  # type: ignore[arg-type]
-        if latest and latest.state == JobState.completed:
+        if latest and latest.state == JobState.completed and not book.abs_missing:
             continue
         try:
             if _queue_download(session, book):
@@ -197,22 +242,6 @@ def download_all(
         except HTTPException:
             continue
     return {"queued": queued}
-
-
-@router.post("/batch/exclude", dependencies=admin_only)
-def batch_exclude(payload: BatchExclude, session: Session = Depends(db_session)) -> dict:
-    updated = 0
-    for bid in payload.book_ids:
-        book = session.get(Book, bid)
-        if book is not None and book.excluded != payload.excluded:
-            _apply_exclude(book, payload.excluded)
-            session.add(book)
-            updated += 1
-    if updated:
-        verb = "Excluded" if payload.excluded else "Included"
-        session.add(EventLog(category="library", message=f"{verb} {updated} title(s) (bulk)"))
-    session.commit()
-    return {"updated": updated}
 
 
 @router.post("/abs-match", dependencies=admin_only)
@@ -226,19 +255,3 @@ def abs_match(session: Session = Depends(db_session), rematch: bool = False) -> 
     return result
 
 
-@router.post("/batch/download", status_code=status.HTTP_202_ACCEPTED, dependencies=admin_only)
-def batch_download(payload: BatchDownload, session: Session = Depends(db_session)) -> dict:
-    queued = 0
-    for bid in payload.book_ids:
-        book = session.get(Book, bid)
-        if book is None or book.excluded:
-            continue
-        latest = _latest_job(session, bid)
-        if latest and latest.state == JobState.completed:
-            continue
-        try:
-            if _queue_download(session, book):
-                queued += 1
-        except HTTPException:
-            continue
-    return {"queued": queued}
