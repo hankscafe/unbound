@@ -68,6 +68,7 @@ def delete_account(account_id: int, session: Session = Depends(db_session)) -> N
     account = session.get(AudibleAccount, account_id)
     if account is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Account not found")
+    account_svc.deregister_device(account)  # best-effort Amazon device cleanup
     session.delete(account)
     session.commit()
 
@@ -103,6 +104,10 @@ def _persist_if_linked(
     blob = linking.manager.take_result(flow_id) if flow_id else None
     if not blob:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Link completed without auth data")
+    if account.encrypted_auth_blob:
+        # Re-linking: drop the previous device registration so it doesn't linger
+        # in Amazon's device list (best-effort; the old tokens may be dead).
+        account_svc.deregister_device(account)
     account_svc.store_auth_blob(account, blob)
     account.status = AccountStatus.linked
     account.account_owner_email = step.data.get("account_owner_email") or account.account_owner_email
@@ -178,11 +183,20 @@ def link_external_complete(
 @router.post("/{account_id}/unlink", response_model=AccountOut, dependencies=admin_only)
 def unlink(account_id: int, session: Session = Depends(db_session)) -> AccountOut:
     account = _get_account(session, account_id)
+    # Remove the virtual device from Amazon's device list first (best-effort):
+    # orphaned registrations pile up there and are suspected of contributing to
+    # CustomerThrottled download blocks.
+    deregistered = account_svc.deregister_device(account)
     account.encrypted_auth_blob = None
     account.encrypted_activation_bytes = None
     account.status = AccountStatus.unlinked
     session.add(account)
-    session.add(EventLog(category="account", account_id=account.id, message=f"Unlinked '{account.label}'"))
+    message = f"Unlinked '{account.label}'"
+    if not deregistered:
+        message += (" — the device registration could not be removed from Amazon; "
+                    "if an 'Unbound' (or 'Audible for iPhone') entry lingers in "
+                    "Amazon's device list, remove it there")
+    session.add(EventLog(category="account", account_id=account.id, message=message))
     session.commit()
     return _to_out(account)
 

@@ -199,6 +199,43 @@ def test_throttle_cooldown_blocks_downloads_locally(client, monkeypatch):
         assert "Skipped without contacting Audible" in job.error_message
 
 
+def test_device_registration_patched_to_unbound_name():
+    import audible.auth as audible_auth
+
+    from app.audible import client as ac
+
+    # The custom register function (device_name "Unbound") must be the one the
+    # audible library's login flows actually call.
+    assert audible_auth.register_ is ac._register_unbound_device
+
+
+def test_unlink_deregisters_device(client, monkeypatch):
+    from app.api.routers import accounts as accounts_router
+
+    calls: list[int] = []
+    monkeypatch.setattr(accounts_router.account_svc, "deregister_device",
+                        lambda account: calls.append(account.id) or True)
+    with Session(engine) as session:
+        account_id = _account_id(session)
+    r = client.post(f"/api/accounts/{account_id}/unlink")
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "unlinked"
+    assert calls == [account_id]
+
+
+def test_deregister_device_is_best_effort(client):
+    from app.services import accounts as account_svc
+
+    with Session(engine) as session:
+        account = session.exec(
+            select(AudibleAccount).where(AudibleAccount.label == "Sync Test")
+        ).one()
+        # Garbage blob → load/deregister fails internally, but never raises.
+        assert account_svc.deregister_device(account) is False
+        account.encrypted_auth_blob = None
+        assert account_svc.deregister_device(account) is False
+
+
 def test_download_refused_when_rights_restricted(client):
     with Session(engine) as session:
         account_id = _account_id(session)

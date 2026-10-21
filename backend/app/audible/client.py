@@ -17,8 +17,11 @@ import tempfile
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+import httpx
 
 from app.core.logging import get_logger
 
@@ -48,6 +51,81 @@ def _require_audible() -> None:
         )
 
 
+# --- Device registration (named "Unbound") ----------------------------------
+
+# The audible library hardcodes the registered device's name to
+# "…Audible for iPhone", which is easy to mistake for a stale phone entry in
+# Amazon's device list. This is the library's ``register`` function with only
+# the device_name changed, patched over ``audible.auth.register_`` below (the
+# auth module binds the name at import, so patching audible.register alone
+# would not take). Mirrors audible 0.10.x — revisit on library upgrades.
+def _register_unbound_device(
+    authorization_code: str,
+    code_verifier: bytes,
+    domain: str,
+    serial: str | None = None,
+    with_username: bool = False,
+    **_extra: Any,
+) -> dict[str, Any]:
+    from audible.login import build_client_id  # type: ignore
+
+    body = {
+        "requested_token_type": [
+            "bearer", "mac_dms", "website_cookies", "store_authentication_cookie"
+        ],
+        "cookies": {"website_cookies": [], "domain": f".amazon.{domain}"},
+        "registration_data": {
+            "domain": "Device",
+            "app_version": "3.56.2",
+            "device_serial": serial,
+            "device_type": "A2CZJZGLK2JJVM",
+            "device_name": "Unbound",
+            "os_version": "15.0.0",
+            "software_version": "35602678",
+            "device_model": "iPhone",
+            "app_name": "Audible",
+        },
+        "auth_data": {
+            "client_id": build_client_id(serial),
+            "authorization_code": authorization_code,
+            "code_verifier": code_verifier.decode(),
+            "code_algorithm": "SHA-256",
+            "client_domain": "DeviceLegacy",
+        },
+        "requested_extensions": ["device_info", "customer_info"],
+    }
+    target_domain = "audible" if with_username else "amazon"
+    resp = httpx.post(f"https://api.{target_domain}.{domain}/auth/register", json=body)
+    resp_json = resp.json()
+    if resp.status_code != 200:
+        raise Exception(resp_json)  # noqa: TRY002 - mirrors the library's behavior
+
+    success = resp_json["response"]["success"]
+    tokens = success["tokens"]
+    expires_s = int(tokens["bearer"]["expires_in"])
+    website_cookies = {
+        c["Name"]: c["Value"].replace(r'"', r"") for c in tokens["website_cookies"]
+    }
+    log.info("device_registered", device_name="Unbound")
+    return {
+        "adp_token": tokens["mac_dms"]["adp_token"],
+        "device_private_key": tokens["mac_dms"]["device_private_key"],
+        "access_token": tokens["bearer"]["access_token"],
+        "refresh_token": tokens["bearer"]["refresh_token"],
+        "expires": (datetime.utcnow() + timedelta(seconds=expires_s)).timestamp(),
+        "website_cookies": website_cookies,
+        "store_authentication_cookie": tokens["store_authentication_cookie"],
+        "device_info": success["extensions"]["device_info"],
+        "customer_info": success["extensions"]["customer_info"],
+    }
+
+
+if AUDIBLE_AVAILABLE:  # pragma: no cover - import side effect
+    from audible import auth as _audible_auth  # type: ignore
+
+    _audible_auth.register_ = _register_unbound_device
+
+
 # --- Serialization ---------------------------------------------------------
 
 
@@ -70,6 +148,23 @@ def serialize_auth(auth: "audible.Authenticator") -> str:  # type: ignore[name-d
             tmp.unlink()
         except OSError:
             pass
+
+
+def deregister_device(auth: "audible.Authenticator") -> None:  # type: ignore[name-defined]
+    """Remove this authenticator's virtual device registration from Amazon.
+
+    Keeps the account's device list clean (the registrations show up there as
+    "…'s Audible for iPhone"); stale entries are suspected of contributing to
+    CustomerThrottled license blocks (rmcrackan/Libation#2110).
+    """
+    _require_audible()
+    try:
+        if auth.access_token_expired:  # type: ignore[union-attr]
+            auth.refresh_access_token()  # type: ignore[union-attr]
+    except Exception:
+        pass  # deregistration below may still succeed with the current token
+    auth.deregister_device()  # type: ignore[union-attr]
+    log.info("device_deregistered")
 
 
 def deserialize_auth(blob: str) -> "audible.Authenticator":  # type: ignore[name-defined]
