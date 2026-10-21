@@ -1,6 +1,6 @@
 [project]
 name = "unbound-backend"
-version = "0.13.0"
+version = "0.13.1"
 description = "Unbound — self-hosted Audible library manager (Libation-style), REST API + web UI"
 requires-python = ">=3.11,<3.13"
 license = { text = "AGPL-3.0-or-later" }
@@ -45,3 +45,9 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
+# Pin the rule set to ruff's pre-0.17 defaults. CI installs the latest ruff, and
+# 0.17 expanded the defaults (B008 on FastAPI Depends defaults, import sorting,
+# RUF100, …), which flagged the whole codebase and broke the lint step.
+select = ["E4", "E7", "E9", "F"]
