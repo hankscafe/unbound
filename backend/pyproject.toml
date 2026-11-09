@@ -1,6 +1,6 @@
 [project]
 name = "unbound-backend"
-version = "0.13.5"
+version = "0.14.0"
 description = "Unbound — self-hosted Audible library manager (Libation-style), REST API + web UI"
 requires-python = ">=3.11,<3.13"
 license = { text = "AGPL-3.0-or-later" }
@@ -17,7 +17,9 @@ dependencies = [
     "httpx>=0.27",
     "structlog>=24.1",
     "sse-starlette>=2.1",
-    "audible>=0.10.0",
+    # 0.13.1+ required: Audible throttles/denies licenses ("CustomerThrottled")
+    # for devices registered with the older iPhone profile (mkb79/Audible#909).
+    "audible>=0.13.1",
     "mutagen>=1.47",
     "apprise>=1.8",
     "pyotp>=2.9",

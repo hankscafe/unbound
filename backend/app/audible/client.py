@@ -17,7 +17,7 @@ import tempfile
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -58,15 +58,19 @@ def _require_audible() -> None:
 # Amazon's device list. This is the library's ``register`` function with only
 # the device_name changed, patched over ``audible.auth.register_`` below (the
 # auth module binds the name at import, so patching audible.register alone
-# would not take). Mirrors audible 0.10.x — revisit on library upgrades.
+# would not take). Mirrors audible 0.13.1; the profile versions are imported
+# from the library so its updates flow through. Audible throttles/denies
+# licenses for devices registered with outdated profiles (mkb79/Audible#909),
+# so keep this in lockstep with the library on upgrades.
 def _register_unbound_device(
     authorization_code: str,
     code_verifier: bytes,
     domain: str,
-    serial: str | None = None,
+    serial: str,
     with_username: bool = False,
     **_extra: Any,
 ) -> dict[str, Any]:
+    from audible._device import APP_VERSION, OS_VERSION, SOFTWARE_VERSION  # type: ignore
     from audible.login import build_client_id  # type: ignore
 
     body = {
@@ -76,12 +80,12 @@ def _register_unbound_device(
         "cookies": {"website_cookies": [], "domain": f".amazon.{domain}"},
         "registration_data": {
             "domain": "Device",
-            "app_version": "3.56.2",
+            "app_version": APP_VERSION,
             "device_serial": serial,
             "device_type": "A2CZJZGLK2JJVM",
             "device_name": "Unbound",
-            "os_version": "15.0.0",
-            "software_version": "35602678",
+            "os_version": OS_VERSION,
+            "software_version": SOFTWARE_VERSION,
             "device_model": "iPhone",
             "app_name": "Audible",
         },
@@ -103,18 +107,20 @@ def _register_unbound_device(
     success = resp_json["response"]["success"]
     tokens = success["tokens"]
     expires_s = int(tokens["bearer"]["expires_in"])
-    website_cookies = {
-        c["Name"]: c["Value"].replace(r'"', r"") for c in tokens["website_cookies"]
-    }
-    log.info("device_registered", device_name="Unbound")
+    website_cookies = None
+    if "website_cookies" in tokens:
+        website_cookies = {
+            c["Name"]: c["Value"].replace(r'"', r"") for c in tokens["website_cookies"]
+        }
+    log.info("device_registered", device_name="Unbound", app_version=APP_VERSION)
     return {
         "adp_token": tokens["mac_dms"]["adp_token"],
         "device_private_key": tokens["mac_dms"]["device_private_key"],
         "access_token": tokens["bearer"]["access_token"],
         "refresh_token": tokens["bearer"]["refresh_token"],
-        "expires": (datetime.utcnow() + timedelta(seconds=expires_s)).timestamp(),
+        "expires": (datetime.now(timezone.utc) + timedelta(seconds=expires_s)).timestamp(),
         "website_cookies": website_cookies,
-        "store_authentication_cookie": tokens["store_authentication_cookie"],
+        "store_authentication_cookie": tokens.get("store_authentication_cookie"),
         "device_info": success["extensions"]["device_info"],
         "customer_info": success["extensions"]["customer_info"],
     }
