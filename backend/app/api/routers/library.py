@@ -36,14 +36,16 @@ def _latest_job(session: Session, book_id: int) -> DownloadJob | None:
     ).first()
 
 
-def _abs_link(session: Session, book: Book) -> str | None:
+def _abs_link(session: Session, book: Book, account: AudibleAccount | None) -> str | None:
     """'Open in AudiobookShelf' link: exact item deep-link if matched, else title search."""
     base = (init_db.get_setting(session, init_db.SETTING_ABS_URL) or "").rstrip("/")
     if not base:
         return None
     if book.abs_item_id:
         return f"{base}/item/{book.abs_item_id}"
-    lib = init_db.get_setting(session, init_db.SETTING_ABS_LIBRARY_ID)
+    lib = (account.abs_library_id if account else None) or init_db.get_setting(
+        session, init_db.SETTING_ABS_LIBRARY_ID
+    )
     if lib:
         return f"{base}/library/{lib}/search?q={quote(book.title)}"
     return base
@@ -73,7 +75,7 @@ def _to_out(session: Session, book: Book, accounts: dict[int, AudibleAccount]) -
         download_restricted=book.download_restricted,
         purchase_date=book.purchase_date,
         audible_url=audible_product_url(book.asin, account.marketplace if account else "us"),
-        abs_url=_abs_link(session, book) if (completed or book.abs_item_id) else None,
+        abs_url=_abs_link(session, book, account) if (completed or book.abs_item_id) else None,
         abs_present=book.abs_item_id is not None,
         abs_auto_excluded=book.abs_auto_excluded,
         abs_missing=book.abs_missing,

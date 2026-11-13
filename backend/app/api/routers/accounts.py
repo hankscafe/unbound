@@ -13,6 +13,7 @@ from app.db.models import AccountStatus, AudibleAccount, EventLog, User
 from app.schemas import (
     AccountCreate,
     AccountOut,
+    AccountUpdate,
     ExternalLinkComplete,
     GuidedLinkStart,
     LinkCaptcha,
@@ -36,6 +37,7 @@ def _to_out(a: AudibleAccount) -> AccountOut:
         account_owner_email=a.account_owner_email,
         status=a.status.value,
         badge_color=a.badge_color,
+        abs_library_id=a.abs_library_id,
         last_sync_at=a.last_sync_at,
         last_error=a.last_error,
     )
@@ -57,6 +59,19 @@ def create_account(payload: AccountCreate, session: Session = Depends(db_session
     account = AudibleAccount(
         label=payload.label, marketplace=payload.marketplace, badge_color=payload.badge_color
     )
+    session.add(account)
+    session.commit()
+    session.refresh(account)
+    return _to_out(account)
+
+
+@router.patch("/{account_id}", response_model=AccountOut, dependencies=admin_only)
+def update_account(
+    account_id: int, payload: AccountUpdate, session: Session = Depends(db_session)
+) -> AccountOut:
+    account = _get_account(session, account_id)
+    if "abs_library_id" in payload.model_fields_set:
+        account.abs_library_id = (payload.abs_library_id or "").strip() or None
     session.add(account)
     session.commit()
     session.refresh(account)

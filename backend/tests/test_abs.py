@@ -51,9 +51,11 @@ def _resolve_mock(base, token, book, library_id=None):
 @pytest.fixture()
 def client(monkeypatch):
     monkeypatch.setattr(abs_svc, "resolve_item_id", _resolve_mock)
-    # All matched items exist in ABS unless a test says otherwise.
+    # All matched items exist in ABS (one library) unless a test says otherwise.
     monkeypatch.setattr(
-        abs_svc, "fetch_all_item_ids", lambda base, token: {f"item-{a}" for a in IN_ABS}
+        abs_svc,
+        "fetch_item_ids_by_library",
+        lambda base, token: {"lib-main": {f"item-{a}" for a in IN_ABS}},
     )
     with TestClient(app) as c:
         with Session(engine) as session:
@@ -163,7 +165,9 @@ def test_batch_routes_not_shadowed_by_book_id(client):
 def test_vanished_item_flags_our_download_missing(client, monkeypatch):
     client.post("/api/library/abs-match")
     # ASINABS2 (our completed download) disappears from ABS; nothing re-matches.
-    monkeypatch.setattr(abs_svc, "fetch_all_item_ids", lambda base, token: {"item-ASINABS1"})
+    monkeypatch.setattr(
+        abs_svc, "fetch_item_ids_by_library", lambda base, token: {"lib-main": {"item-ASINABS1"}}
+    )
     monkeypatch.setattr(abs_svc, "resolve_item_id", lambda *a, **k: None)
     r = client.post("/api/library/abs-match")
     assert r.status_code == 200
@@ -191,7 +195,9 @@ def test_vanished_item_flags_our_download_missing(client, monkeypatch):
 
 def test_vanished_item_lifts_auto_exclusion(client, monkeypatch):
     client.post("/api/library/abs-match")  # auto-excludes ASINABS1 (not ours)
-    monkeypatch.setattr(abs_svc, "fetch_all_item_ids", lambda base, token: {"item-ASINABS2"})
+    monkeypatch.setattr(
+        abs_svc, "fetch_item_ids_by_library", lambda base, token: {"lib-main": {"item-ASINABS2"}}
+    )
     monkeypatch.setattr(abs_svc, "resolve_item_id", lambda *a, **k: None)
     client.post("/api/library/abs-match")
     b = _book(client, "ASINABS1")
@@ -201,22 +207,133 @@ def test_vanished_item_lifts_auto_exclusion(client, monkeypatch):
 
 def test_empty_abs_item_list_is_not_a_mass_removal(client, monkeypatch):
     client.post("/api/library/abs-match")
-    monkeypatch.setattr(abs_svc, "fetch_all_item_ids", lambda base, token: set())
+    monkeypatch.setattr(
+        abs_svc, "fetch_item_ids_by_library", lambda base, token: {"lib-main": set()}
+    )
     client.post("/api/library/abs-match")
     ours = _book(client, "ASINABS2")
     assert ours["abs_missing"] is False and ours["abs_present"] is True
 
 
+def test_patch_account_abs_library_id(client):
+    with Session(engine) as session:
+        account = session.exec(
+            select(AudibleAccount).where(AudibleAccount.label == "ABS Test")
+        ).one()
+        account_id = account.id
+    r = client.patch(f"/api/accounts/{account_id}", json={"abs_library_id": "lib-main"})
+    assert r.status_code == 200, r.text
+    assert r.json()["abs_library_id"] == "lib-main"
+    # Echoed back by the listing; an empty string clears it.
+    listed = next(a for a in client.get("/api/accounts").json() if a["id"] == account_id)
+    assert listed["abs_library_id"] == "lib-main"
+    r = client.patch(f"/api/accounts/{account_id}", json={"abs_library_id": ""})
+    assert r.status_code == 200 and r.json()["abs_library_id"] is None
+
+
+def test_account_scoped_matching(client, monkeypatch):
+    """An account scoped to its own ABS library must not match (and auto-exclude
+    on) a copy of the title that only exists in ANOTHER account's library."""
+    with Session(engine) as session:
+        main = session.exec(
+            select(AudibleAccount).where(AudibleAccount.label == "ABS Test")
+        ).one()
+        main.abs_library_id = "lib-main"  # ABS1/ABS2 items live here
+        session.add(main)
+        other = AudibleAccount(
+            label="ABS Test 2", status=AccountStatus.linked, abs_library_id="lib-other"
+        )
+        session.add(other)
+        session.commit()
+        session.refresh(other)
+        # The same title the main account already has in ABS, owned by account 2.
+        session.add(Book(audible_account_id=other.id, asin="ASINABS1", title="Already There"))
+        session.commit()
+        other_id = other.id
+
+    # Scope-aware resolver: items only resolve inside lib-main.
+    def scoped_resolve(base, token, book, library_id=None):
+        return f"item-{book.asin}" if library_id == "lib-main" and book.asin in IN_ABS else None
+
+    monkeypatch.setattr(abs_svc, "resolve_item_id", scoped_resolve)
+    try:
+        r = client.post("/api/library/abs-match")
+        assert r.status_code == 200, r.text
+        books = client.get("/api/library?limit=1000").json()
+        mine = next(b for b in books if b["asin"] == "ASINABS1" and b["audible_account_id"] != other_id)
+        theirs = next(b for b in books if b["asin"] == "ASINABS1" and b["audible_account_id"] == other_id)
+        assert mine["abs_present"] is True and mine["excluded"] is True
+        assert theirs["abs_present"] is False and theirs["excluded"] is False
+    finally:
+        with Session(engine) as session:
+            for book in session.exec(select(Book).where(Book.audible_account_id == other_id)).all():
+                session.delete(book)
+            acct = session.get(AudibleAccount, other_id)
+            if acct:
+                session.delete(acct)
+            main = session.exec(
+                select(AudibleAccount).where(AudibleAccount.label == "ABS Test")
+            ).one()
+            main.abs_library_id = None
+            session.add(main)
+            session.commit()
+
+
+def test_scoped_rematch_drops_cross_library_match(client, monkeypatch):
+    """A book previously matched to an item in another account's library is
+    unmatched (and its auto-exclusion lifted) once its account is scoped."""
+    client.post("/api/library/abs-match")  # ASINABS1 matched + auto-excluded
+    with Session(engine) as session:
+        account = session.exec(
+            select(AudibleAccount).where(AudibleAccount.label == "ABS Test")
+        ).one()
+        account.abs_library_id = "lib-empty"  # this account's own (empty) library
+        session.add(account)
+        session.commit()
+    monkeypatch.setattr(
+        abs_svc,
+        "fetch_item_ids_by_library",
+        lambda base, token: {
+            "lib-main": {f"item-{a}" for a in IN_ABS},  # items are elsewhere
+            "lib-empty": set(),
+        },
+    )
+    # Nothing resolves inside lib-empty.
+    monkeypatch.setattr(abs_svc, "resolve_item_id", lambda *a, **k: None)
+    try:
+        r = client.post("/api/library/abs-match")
+        assert r.status_code == 200, r.text
+        b = _book(client, "ASINABS1")
+        assert b["abs_present"] is False
+        assert b["excluded"] is False and b["abs_auto_excluded"] is False
+        # Our own completed download is NOT flagged missing — the item still
+        # exists in ABS, just outside this account's library.
+        ours = _book(client, "ASINABS2")
+        assert ours["abs_missing"] is False and ours["abs_present"] is False
+    finally:
+        with Session(engine) as session:
+            account = session.exec(
+                select(AudibleAccount).where(AudibleAccount.label == "ABS Test")
+            ).one()
+            account.abs_library_id = None
+            session.add(account)
+            session.commit()
+
+
 def test_item_reappearing_clears_missing(client, monkeypatch):
     client.post("/api/library/abs-match")
-    monkeypatch.setattr(abs_svc, "fetch_all_item_ids", lambda base, token: {"item-ASINABS1"})
+    monkeypatch.setattr(
+        abs_svc, "fetch_item_ids_by_library", lambda base, token: {"lib-main": {"item-ASINABS1"}}
+    )
     monkeypatch.setattr(abs_svc, "resolve_item_id", lambda *a, **k: None)
     client.post("/api/library/abs-match")
     assert _book(client, "ASINABS2")["abs_missing"] is True
 
     # The item comes back (re-imported / rescanned) — the flag clears.
     monkeypatch.setattr(
-        abs_svc, "fetch_all_item_ids", lambda base, token: {f"item-{a}" for a in IN_ABS}
+        abs_svc,
+        "fetch_item_ids_by_library",
+        lambda base, token: {"lib-main": {f"item-{a}" for a in IN_ABS}},
     )
     monkeypatch.setattr(abs_svc, "resolve_item_id", _resolve_mock)
     client.post("/api/library/abs-match")

@@ -115,8 +115,15 @@ class AccountOut(BaseModel):
     account_owner_email: str | None
     status: str
     badge_color: str
+    abs_library_id: str | None
     last_sync_at: datetime | None
     last_error: str | None
+
+
+class AccountUpdate(BaseModel):
+    """PATCH payload — only fields actually sent are changed."""
+
+    abs_library_id: str | None = None
 
 
 class GuidedLinkStart(BaseModel):

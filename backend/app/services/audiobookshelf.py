@@ -113,20 +113,21 @@ def resolve_item_id(base: str, token: str, book: Book, library_id: str | None = 
     return None
 
 
-def fetch_all_item_ids(base: str, token: str) -> set[str]:
-    """Every library item id across ABS book libraries (one request per library).
+def fetch_item_ids_by_library(base: str, token: str) -> dict[str, set[str]]:
+    """Item ids per ABS book library (one request per library).
 
-    Used to verify that previously matched items still exist. ``limit=0`` asks
-    ABS for all items; ``minified=1`` keeps the payload small.
+    Used to verify that previously matched items still exist — and, for a book
+    whose account is scoped to one library, that the item lives in THAT library.
+    ``limit=0`` asks ABS for all items; ``minified=1`` keeps the payload small.
     """
-    ids: set[str] = set()
+    ids: dict[str, set[str]] = {}
     with _client(base, token, timeout=30.0) as c:
         for lib in list_libraries(base, token):
             if lib.get("mediaType") != "book":
                 continue
             r = c.get(f"/api/libraries/{lib['id']}/items", params={"limit": 0, "minified": 1})
             r.raise_for_status()
-            ids.update(i["id"] for i in r.json().get("results", []) if i.get("id"))
+            ids[lib["id"]] = {i["id"] for i in r.json().get("results", []) if i.get("id")}
     return ids
 
 
@@ -153,15 +154,29 @@ def match_all(session: Session, rematch: bool = False) -> dict:
     ``abs_auto_exclude`` setting is on, matched books that we did NOT download
     are auto-excluded from (auto-)downloading, unless an admin re-included them
     before (``abs_exclude_override``).
+
+    An account with ``abs_library_id`` set is matched only against that library
+    (falling back to the global setting, then all book libraries), so a copy of
+    a title sitting in another account's library doesn't count as present.
     """
     from sqlmodel import select
 
-    from app.db.models import Book, DownloadJob, EventLog, JobState
+    from app.db.models import AudibleAccount, Book, DownloadJob, EventLog, JobState
 
     base, token, library_id = get_config(session)
     if not base or not token:
         return {"configured": False, "checked": 0, "matched": 0,
                 "auto_excluded": 0, "missing": 0}
+
+    # Per-account library scoping (account id -> ABS library id).
+    account_libs = {
+        a.id: a.abs_library_id
+        for a in session.exec(select(AudibleAccount)).all()
+        if a.abs_library_id
+    }
+
+    def _book_library(book: Book) -> str | None:
+        return account_libs.get(book.audible_account_id) or library_id
 
     completed = {
         j.book_id
@@ -179,13 +194,33 @@ def match_all(session: Session, rematch: bool = False) -> dict:
     ).all()
     if matched_books:
         try:
-            existing_ids: set[str] | None = fetch_all_item_ids(base, token)
+            ids_by_lib: dict[str, set[str]] | None = fetch_item_ids_by_library(base, token)
         except Exception as exc:  # pragma: no cover - network
-            existing_ids = None
+            ids_by_lib = None
             log.warning("abs_items_fetch_failed", error=str(exc))
+        existing_ids = set().union(*ids_by_lib.values()) if ids_by_lib else set()
         if existing_ids:
             for book in matched_books:
                 if book.abs_item_id in existing_ids:
+                    # The item exists — but when the book's account is scoped to
+                    # one library, a match into a DIFFERENT library no longer
+                    # counts (e.g. another account's copy). Drop it so the book
+                    # is re-resolved within its own library below.
+                    scoped = account_libs.get(book.audible_account_id)
+                    if (
+                        scoped
+                        and scoped in ids_by_lib  # honor only an id that exists
+                        and book.abs_item_id not in ids_by_lib[scoped]
+                    ):
+                        book.abs_item_id = None
+                        if book.abs_auto_excluded:
+                            book.excluded = False
+                            book.abs_auto_excluded = False
+                            session.add(EventLog(
+                                category="library", book_id=book.id,
+                                message="Re-included (only another account's library "
+                                        f"has it in AudiobookShelf): {book.title}"))
+                        session.add(book)
                     continue
                 book.abs_item_id = None
                 if book.id in completed and not book.abs_missing:
@@ -213,7 +248,7 @@ def match_all(session: Session, rematch: bool = False) -> dict:
             continue
         checked += 1
         try:
-            item_id = resolve_item_id(base, token, book, library_id)
+            item_id = resolve_item_id(base, token, book, _book_library(book))
         except Exception as exc:  # pragma: no cover - network
             log.warning("abs_match_error", asin=book.asin, error=str(exc))
             continue

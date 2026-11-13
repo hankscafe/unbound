@@ -247,7 +247,20 @@ function OIDCSection() {
 // --- Integrations (automation / AudiobookShelf / notifications) ------------
 
 function IntegrationsSection({ tab }: { tab: "automation" | "abs" | "notifications" }) {
+  const qc = useQueryClient();
   const { data, isLoading } = useQuery({ queryKey: ["integrations"], queryFn: api.integrations });
+  const { data: accounts } = useQuery({
+    queryKey: ["accounts"],
+    queryFn: api.accounts,
+    enabled: tab === "abs",
+  });
+  // ABS libraries for the per-account pickers (needs a working URL + token).
+  const { data: absLibs } = useQuery({
+    queryKey: ["abs-libraries"],
+    queryFn: api.testAudiobookshelf,
+    enabled: tab === "abs" && !!data?.abs_url && !!data?.abs_token_set,
+    retry: false,
+  });
   const [form, setForm] = useState<Integrations | null>(null);
   const [saved, setSaved] = useState(false);
   const [testMsg, setTestMsg] = useState<string | null>(null);
@@ -385,6 +398,54 @@ function IntegrationsSection({ tab }: { tab: "automation" | "abs" | "notificatio
                 onChange={(e) => set({ abs_library_id: e.target.value })}
               />
             </div>
+            {(accounts || []).length > 0 && (
+              <div className="space-y-2 border-t border-ink-800 pt-3">
+                <label className="label">Per-account library (overrides the setting above)</label>
+                <p className="text-xs text-slate-500">
+                  Each Audible account is matched only against its own AudiobookShelf library — a
+                  copy of a title in another account's library won't count as “already in ABS”.
+                  Saved immediately.
+                </p>
+                {(accounts || []).map((a) => {
+                  const bookLibs = (absLibs?.libraries || []).filter((l) => l.mediaType === "book");
+                  const known = bookLibs.some((l) => l.id === a.abs_library_id);
+                  return (
+                    <div key={a.id} className="flex items-center gap-2">
+                      <span
+                        className="w-40 shrink-0 truncate text-sm"
+                        style={{ color: a.badge_color }}
+                        title={a.label}
+                      >
+                        {a.label}
+                      </span>
+                      <select
+                        className="input flex-1"
+                        value={a.abs_library_id || ""}
+                        onChange={async (e) => {
+                          await api.updateAccount(a.id, { abs_library_id: e.target.value });
+                          qc.invalidateQueries({ queryKey: ["accounts"] });
+                        }}
+                      >
+                        <option value="">Global setting / all libraries</option>
+                        {bookLibs.map((l) => (
+                          <option key={l.id} value={l.id}>
+                            {l.name}
+                          </option>
+                        ))}
+                        {a.abs_library_id && !known && (
+                          <option value={a.abs_library_id}>{a.abs_library_id}</option>
+                        )}
+                      </select>
+                    </div>
+                  );
+                })}
+                {!absLibs && (
+                  <p className="text-xs text-slate-500">
+                    Save &amp; test the connection to list your libraries here.
+                  </p>
+                )}
+              </div>
+            )}
             <label className="flex items-start gap-2 border-t border-ink-800 pt-3 text-sm text-slate-300">
               <input
                 type="checkbox"
@@ -406,8 +467,10 @@ function IntegrationsSection({ tab }: { tab: "automation" | "abs" | "notificatio
                 className="btn-ghost"
                 onClick={async () => {
                   await save();
+                  qc.invalidateQueries({ queryKey: ["integrations"] });
                   try {
                     const r = await api.testAudiobookshelf();
+                    qc.setQueryData(["abs-libraries"], r);
                     setAbsMsg(`Connected — ${r.libraries.length} librar${r.libraries.length === 1 ? "y" : "ies"}.`);
                   } catch (e: any) {
                     setAbsMsg(e?.message || "Connection failed");
@@ -514,11 +577,13 @@ function IntegrationsSection({ tab }: { tab: "automation" | "abs" | "notificatio
 // --- Library profiles ------------------------------------------------------
 
 function ProfileForm({ onSaved }: { onSaved: () => void }) {
+  const { data: accounts } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
   const [name, setName] = useState("");
   const [rootPath, setRootPath] = useState("/data/library");
   const [folder, setFolder] = useState("{author}/{series}");
   const [file, setFile] = useState("{title}");
   const [isDefault, setIsDefault] = useState(true);
+  const [accountId, setAccountId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -533,6 +598,7 @@ function ProfileForm({ onSaved }: { onSaved: () => void }) {
         filename_template: file,
         is_default: isDefault,
         audio_format: "m4b",
+        audible_account_id: accountId,
       } as Partial<LibraryProfile>);
       setName("");
       onSaved();
@@ -563,6 +629,21 @@ function ProfileForm({ onSaved }: { onSaved: () => void }) {
           <label className="label">Filename template</label>
           <input className="input" value={file} onChange={(e) => setFile(e.target.value)} />
         </div>
+        <div>
+          <label className="label">Audible account (optional — route one account here)</label>
+          <select
+            className="input"
+            value={accountId ?? ""}
+            onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : null)}
+          >
+            <option value="">All accounts</option>
+            {(accounts || []).map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
       <p className="text-xs text-slate-500">
         Tokens: {"{author} {title} {series} {series_seq} {narrator} {asin} {year}"}
@@ -582,6 +663,7 @@ function ProfileForm({ onSaved }: { onSaved: () => void }) {
 function LibraryProfilesSection() {
   const qc = useQueryClient();
   const { data: profiles, isLoading } = useQuery({ queryKey: ["profiles"], queryFn: api.profiles });
+  const { data: accounts } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
   const refresh = () => qc.invalidateQueries({ queryKey: ["profiles"] });
   if (isLoading) return <Spinner />;
   return (
@@ -598,6 +680,26 @@ function LibraryProfilesSection() {
                 {p.root_path}/{p.folder_template}/{p.filename_template}.{p.audio_format}
               </div>
             </div>
+            <select
+              className="input !w-auto text-xs"
+              title="Downloads from this account use this profile"
+              value={p.audible_account_id ?? ""}
+              onChange={(e) =>
+                api
+                  .updateProfile(p.id, {
+                    ...p,
+                    audible_account_id: e.target.value ? Number(e.target.value) : null,
+                  })
+                  .then(refresh)
+              }
+            >
+              <option value="">All accounts</option>
+              {(accounts || []).map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.label}
+                </option>
+              ))}
+            </select>
             <button className="btn-danger !px-2 !py-1 text-xs" onClick={() => api.deleteProfile(p.id).then(refresh)}>
               Delete
             </button>

@@ -62,6 +62,7 @@ export interface Account {
   account_owner_email: string | null;
   status: string;
   badge_color: string;
+  abs_library_id: string | null;
   last_sync_at: string | null;
   last_error: string | null;
 }
@@ -260,6 +261,8 @@ export const api = {
   createAccount: (d: { label: string; marketplace: string; badge_color?: string }) =>
     req<Account>("/accounts", { method: "POST", ...body(d) }),
   deleteAccount: (id: number) => req<void>(`/accounts/${id}`, { method: "DELETE" }),
+  updateAccount: (id: number, d: Partial<Account>) =>
+    req<Account>(`/accounts/${id}`, { method: "PATCH", ...body(d) }),
   linkGuided: (id: number, d: { email: string; password: string }) =>
     req<LinkStep>(`/accounts/${id}/link/guided`, { method: "POST", ...body(d) }),
   linkOtp: (id: number, flowId: string, otp: string) =>
@@ -327,6 +330,8 @@ export const api = {
   profiles: () => req<LibraryProfile[]>("/settings/library-profiles"),
   createProfile: (d: Partial<LibraryProfile>) =>
     req<LibraryProfile>("/settings/library-profiles", { method: "POST", ...body(d) }),
+  updateProfile: (id: number, d: Partial<LibraryProfile>) =>
+    req<LibraryProfile>(`/settings/library-profiles/${id}`, { method: "PUT", ...body(d) }),
   deleteProfile: (id: number) =>
     req<void>(`/settings/library-profiles/${id}`, { method: "DELETE" }),
   apiKeys: () => req<any[]>("/settings/api-keys"),

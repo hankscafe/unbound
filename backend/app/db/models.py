@@ -107,6 +107,11 @@ class AudibleAccount(SQLModel, table=True):
         default=AccountStatus.unlinked, sa_column=Column(SAEnum(AccountStatus), nullable=False)
     )
     badge_color: str = "#F8991C"  # per-account badge accent
+    # Optional: the AudiobookShelf library holding THIS account's books. Scopes
+    # ABS matching (and the search deep-link fallback) to that library, so a copy
+    # of a title in another account's library doesn't count as "already there".
+    # Falls back to the global abs_library_id setting, then all book libraries.
+    abs_library_id: str | None = None
     # AES-GCM-encrypted device auth blob (tokens/keys). NULL until linked.
     encrypted_auth_blob: str | None = Field(default=None, sa_column=Column(Text))
     # Encrypted cached activation bytes (AAX). NULL until fetched.
