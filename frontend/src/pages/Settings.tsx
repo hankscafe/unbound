@@ -33,7 +33,24 @@ function SecuritySection() {
     <section className="space-y-3">
       <h2 className={H2}>Two-factor authentication</h2>
 
-      {me.totp_enabled ? (
+      {/* Recovery codes take precedence: after enable, refresh() flips me.totp_enabled
+          true, so this must be checked BEFORE it or the codes vanish before you save them. */}
+      {recovery ? (
+        <div className="card space-y-3 p-4">
+          <div className="text-sm text-emerald-400">
+            ✓ 2FA enabled. Save these recovery codes somewhere safe — each works once if you lose your
+            authenticator.
+          </div>
+          <div className="grid grid-cols-2 gap-1 rounded-lg bg-ink-850 p-3 font-mono text-sm text-slate-200 sm:grid-cols-2">
+            {recovery.map((c) => (
+              <div key={c}>{c}</div>
+            ))}
+          </div>
+          <button className="btn-primary" onClick={() => setRecovery(null)}>
+            I’ve saved them
+          </button>
+        </div>
+      ) : me.totp_enabled ? (
         <div className="card space-y-3 p-4">
           <div className="text-sm text-emerald-400">✓ 2FA is enabled on your account.</div>
           <p className="text-sm text-slate-500">
@@ -55,21 +72,6 @@ function SecuritySection() {
               Disable 2FA
             </button>
           </div>
-        </div>
-      ) : recovery ? (
-        <div className="card space-y-3 p-4">
-          <div className="text-sm text-emerald-400">
-            ✓ 2FA enabled. Save these recovery codes somewhere safe — each works once if you lose your
-            authenticator.
-          </div>
-          <div className="grid grid-cols-2 gap-1 rounded-lg bg-ink-850 p-3 font-mono text-sm text-slate-200 sm:grid-cols-2">
-            {recovery.map((c) => (
-              <div key={c}>{c}</div>
-            ))}
-          </div>
-          <button className="btn-primary" onClick={() => setRecovery(null)}>
-            I’ve saved them
-          </button>
         </div>
       ) : setup ? (
         <div className="card space-y-3 p-4">
@@ -870,6 +872,28 @@ function UserCard({
         <button className="btn-primary" onClick={save}>
           Save
         </button>
+        {u.totp_enabled && (
+          <button
+            className="btn-ghost"
+            onClick={async () => {
+              if (
+                !window.confirm(
+                  `Reset 2FA for "${u.username}"? They'll sign in with just their password until they re-enroll.`
+                )
+              )
+                return;
+              try {
+                await api.resetUser2fa(u.id);
+                setMsg("2FA reset");
+                onChanged();
+              } catch (e: any) {
+                setMsg(e?.message || "Could not reset 2FA");
+              }
+            }}
+          >
+            Reset 2FA
+          </button>
+        )}
         {!isSelf && (
           <button
             className="btn-danger"

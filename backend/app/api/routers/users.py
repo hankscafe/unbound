@@ -129,6 +129,31 @@ def update_user(
     return _out(session, user)
 
 
+@router.post("/{user_id}/reset-2fa", response_model=UserAdminOut)
+def reset_user_2fa(
+    user_id: int,
+    session: Session = Depends(db_session),
+    admin: User = Depends(require_admin),
+) -> UserAdminOut:
+    """Disable a user's 2FA so they can sign in again — for when they've lost both
+    their authenticator and their recovery codes. They can re-enroll afterwards.
+    This clears the secret without needing a code (the acting admin is the authority)."""
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    if not (user.totp_enabled or user.totp_secret):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "User does not have 2FA enabled")
+    user.totp_enabled = False
+    user.totp_secret = None
+    user.totp_recovery_codes = None
+    session.add(user)
+    session.add(EventLog(category="auth",
+                         message=f"2FA reset for '{user.username}' by '{admin.username}'"))
+    session.commit()
+    session.refresh(user)
+    return _out(session, user)
+
+
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_user(
     user_id: int,

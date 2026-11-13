@@ -305,6 +305,8 @@ export const api = {
     req<AdminUser>("/users", { method: "POST", ...body(d) }),
   updateUser: (id: number, d: AdminUserUpdate) =>
     req<AdminUser>(`/users/${id}`, { method: "PUT", ...body(d) }),
+  resetUser2fa: (id: number) =>
+    req<AdminUser>(`/users/${id}/reset-2fa`, { method: "POST" }),
   deleteUser: (id: number) => req<void>(`/users/${id}`, { method: "DELETE" }),
 
   storeSearch: (accountId: number, q: string, page = 0) =>

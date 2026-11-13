@@ -179,6 +179,44 @@ def test_usernames_are_case_insensitive(env):
     assert r.status_code == 409
 
 
+def test_admin_reset_2fa(env):
+    import pyotp
+
+    from app.core.runtime import get_secret_box
+
+    c, a1, _ = env
+    created = _create_member(c, [a1])
+    # Give the member 2FA directly, as if they'd enrolled.
+    with Session(engine) as session:
+        u = session.get(User, created["id"])
+        u.totp_secret = get_secret_box().encrypt(pyotp.random_base32())
+        u.totp_enabled = True
+        u.totp_recovery_codes = "[]"
+        session.add(u)
+        session.commit()
+
+    # Their login now returns mfa_required (200, but no session cookie set).
+    c.post("/api/auth/logout")
+    c.cookies.clear()
+    r = c.post("/api/auth/login", json=MEMBER)
+    assert r.json()["mfa_required"] is True
+
+    # Admin resets it (no code needed — admin is the authority).
+    c.post("/api/auth/logout")
+    c.cookies.clear()
+    c.post("/api/auth/login", json=ADMIN)
+    r = c.post(f"/api/users/{created['id']}/reset-2fa")
+    assert r.status_code == 200, r.text
+    assert r.json()["totp_enabled"] is False
+    assert c.post(f"/api/users/{created['id']}/reset-2fa").status_code == 400  # already off
+
+    # The member can now sign in with just a password.
+    c.post("/api/auth/logout")
+    c.cookies.clear()
+    r = c.post("/api/auth/login", json=MEMBER)
+    assert r.json()["mfa_required"] is False and r.json()["user"] is not None
+
+
 def test_update_grants_and_access(env):
     c, a1, a2 = env
     created = _create_member(c, [a1])
