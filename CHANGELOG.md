@@ -4,6 +4,25 @@ All notable changes to Unbound are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.2] - 2026-11-20
+
+### Fixed
+- An AudiobookShelf match no longer silently lifts auto-exclusions for books
+  that are still present ([#2](https://github.com/hankscafe/unbound/issues/2)).
+  Item ids stored before per-account library scoping (0.15.0) can point at
+  another library's copy of the same file — AudiobookShelf gives the same
+  folder a different item id per library — and the verification pass treated
+  every one as "only another account's library has it", clearing the exclusion
+  before the very next loop re-matched the book inside its own library. The
+  exclusion is now lifted only when re-resolution also fails, independent of
+  the current "Skip titles already in AudiobookShelf" setting.
+
+### Added
+- The abs-match response, the Settings match summary, and the application log
+  now report a `re_included` count, and a summary event-log entry is written
+  whenever auto-exclusions are lifted — it was previously only visible as
+  per-book event-log entries.
+
 ## [0.16.1] - 2026-11-13
 
 ### Added

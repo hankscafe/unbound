@@ -490,6 +490,7 @@ function IntegrationsSection({ tab }: { tab: "automation" | "abs" | "notificatio
                     setAbsMsg(
                       `Matched ${r.matched} of ${r.checked} title(s)` +
                         (r.auto_excluded ? `, auto-excluded ${r.auto_excluded}` : "") +
+                        (r.re_included ? `, re-included ${r.re_included}` : "") +
                         (r.missing ? `, ${r.missing} missing from ABS` : "") +
                         "."
                     );

@@ -199,10 +199,16 @@ def test_vanished_item_lifts_auto_exclusion(client, monkeypatch):
         abs_svc, "fetch_item_ids_by_library", lambda base, token: {"lib-main": {"item-ASINABS2"}}
     )
     monkeypatch.setattr(abs_svc, "resolve_item_id", lambda *a, **k: None)
-    client.post("/api/library/abs-match")
+    r = client.post("/api/library/abs-match")
+    assert r.json()["re_included"] == 1  # the lift is visible in the summary
     b = _book(client, "ASINABS1")
     assert b["excluded"] is False and b["abs_auto_excluded"] is False
     assert b["abs_missing"] is False  # we never downloaded it, so it is not "missing"
+    with Session(engine) as session:
+        ev = session.exec(
+            select(EventLog).where(col(EventLog.message).contains("Re-included"))
+        ).first()
+        assert ev is not None
 
 
 def test_empty_abs_item_list_is_not_a_mass_removal(client, monkeypatch):
@@ -303,6 +309,7 @@ def test_scoped_rematch_drops_cross_library_match(client, monkeypatch):
     try:
         r = client.post("/api/library/abs-match")
         assert r.status_code == 200, r.text
+        assert r.json()["re_included"] == 1
         b = _book(client, "ASINABS1")
         assert b["abs_present"] is False
         assert b["excluded"] is False and b["abs_auto_excluded"] is False
@@ -310,6 +317,58 @@ def test_scoped_rematch_drops_cross_library_match(client, monkeypatch):
         # exists in ABS, just outside this account's library.
         ours = _book(client, "ASINABS2")
         assert ours["abs_missing"] is False and ours["abs_present"] is False
+    finally:
+        with Session(engine) as session:
+            account = session.exec(
+                select(AudibleAccount).where(AudibleAccount.label == "ABS Test")
+            ).one()
+            account.abs_library_id = None
+            session.add(account)
+            session.commit()
+
+
+def test_scoping_migration_keeps_exclusions(client, monkeypatch):
+    """Issue #2: item ids stored before per-account scoping point at another
+    library's copy of the same files (ABS gives the same folder a different
+    item id per library). Scoping the account must swap the ids, not lift the
+    auto-exclusions — even with the auto-exclude setting now off."""
+    client.post("/api/library/abs-match")  # ASINABS1 auto-excluded, ids in lib-main
+    with Session(engine) as session:
+        account = session.exec(
+            select(AudibleAccount).where(AudibleAccount.label == "ABS Test")
+        ).one()
+        account.abs_library_id = "lib-account"
+        session.add(account)
+        # The setting being off must not matter: nothing is re-decided, the
+        # existing exclusion just keeps holding.
+        init_db.set_setting(session, init_db.SETTING_ABS_AUTO_EXCLUDE, "false")
+        session.commit()
+    # The same titles exist in the account's library under different item ids.
+    monkeypatch.setattr(
+        abs_svc,
+        "fetch_item_ids_by_library",
+        lambda base, token: {
+            "lib-main": {f"item-{a}" for a in IN_ABS},
+            "lib-account": {f"acct-{a}" for a in IN_ABS},
+        },
+    )
+
+    def scoped_resolve(base, token, book, library_id=None):
+        if library_id == "lib-account" and book.asin in IN_ABS:
+            return f"acct-{book.asin}"
+        return None
+
+    monkeypatch.setattr(abs_svc, "resolve_item_id", scoped_resolve)
+    try:
+        r = client.post("/api/library/abs-match?rematch=true")
+        assert r.status_code == 200, r.text
+        out = r.json()
+        assert out["re_included"] == 0 and out["missing"] == 0
+        b = _book(client, "ASINABS1")
+        assert b["excluded"] is True and b["abs_auto_excluded"] is True
+        assert b["abs_present"] is True  # re-matched to the scoped library's id
+        ours = _book(client, "ASINABS2")
+        assert ours["abs_missing"] is False and ours["abs_present"] is True
     finally:
         with Session(engine) as session:
             account = session.exec(

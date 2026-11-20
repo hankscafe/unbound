@@ -166,7 +166,7 @@ def match_all(session: Session, rematch: bool = False) -> dict:
     base, token, library_id = get_config(session)
     if not base or not token:
         return {"configured": False, "checked": 0, "matched": 0,
-                "auto_excluded": 0, "missing": 0}
+                "auto_excluded": 0, "missing": 0, "re_included": 0}
 
     # Per-account library scoping (account id -> ABS library id).
     account_libs = {
@@ -185,10 +185,17 @@ def match_all(session: Session, rematch: bool = False) -> dict:
 
     # Verify previously matched items still exist in ABS. A vanished item means
     # the files were deleted (or the item removed) since we last looked: flag our
-    # own downloads as missing so admins can re-download, and lift auto-exclusions
-    # that no longer hold. An empty id set with matches on record is treated as a
-    # bad fetch, not a wiped library.
+    # own downloads as missing so admins can re-download. An empty id set with
+    # matches on record is treated as a bad fetch, not a wiped library.
+    #
+    # Auto-exclusions are NOT lifted here. A stale item id only means the old
+    # match is void, not that the title left ABS: the re-resolution pass below
+    # decides. Lifting eagerly dropped every exclusion when per-account scoping
+    # invalidated ids that pointed at another library's copy of the same file,
+    # even though each book re-matched one loop later (issue #2).
     missing = 0
+    re_included = 0
+    pending_reinclude: dict[int, str] = {}  # book id -> re-include EventLog message
     matched_books = session.exec(
         select(Book).where(Book.abs_item_id != None)  # noqa: E711
     ).all()
@@ -214,12 +221,9 @@ def match_all(session: Session, rematch: bool = False) -> dict:
                     ):
                         book.abs_item_id = None
                         if book.abs_auto_excluded:
-                            book.excluded = False
-                            book.abs_auto_excluded = False
-                            session.add(EventLog(
-                                category="library", book_id=book.id,
-                                message="Re-included (only another account's library "
-                                        f"has it in AudiobookShelf): {book.title}"))
+                            pending_reinclude[book.id] = (
+                                "Re-included (only another account's library "
+                                f"has it in AudiobookShelf): {book.title}")
                         session.add(book)
                     continue
                 book.abs_item_id = None
@@ -233,12 +237,10 @@ def match_all(session: Session, rematch: bool = False) -> dict:
                                 "Re-download it to restore it."))
                     log.warning("abs_item_missing", asin=book.asin, title=book.title)
                 if book.abs_auto_excluded:
-                    # It was skipped because ABS already had it; that no longer holds.
-                    book.excluded = False
-                    book.abs_auto_excluded = False
-                    session.add(EventLog(
-                        category="library", book_id=book.id,
-                        message=f"Re-included (no longer in AudiobookShelf): {book.title}"))
+                    # It was skipped because ABS already had it; whether that
+                    # still holds is decided by the re-resolution pass below.
+                    pending_reinclude[book.id] = (
+                        f"Re-included (no longer in AudiobookShelf): {book.title}")
                 session.add(book)
 
     auto_exclude = init_db.get_bool(session, init_db.SETTING_ABS_AUTO_EXCLUDE)
@@ -254,6 +256,8 @@ def match_all(session: Session, rematch: bool = False) -> dict:
             continue
         if item_id:
             book.abs_item_id = item_id
+            # Still in ABS (under a new id) — any auto-exclusion keeps holding.
+            pending_reinclude.pop(book.id, None)
             if book.abs_missing:
                 # The item is back (re-imported or rescanned) — clear the flag.
                 book.abs_missing = False
@@ -270,11 +274,28 @@ def match_all(session: Session, rematch: bool = False) -> dict:
                 book.excluded = True
                 book.abs_auto_excluded = True
                 auto_excluded += 1
+        elif book.abs_item_id is None and book.abs_auto_excluded:
+            # Verified gone (this run, or a previous one that errored out before
+            # getting here) AND not re-resolved: the exclusion reason is gone too.
+            book.excluded = False
+            book.abs_auto_excluded = False
+            re_included += 1
+            session.add(EventLog(
+                category="library", book_id=book.id,
+                message=pending_reinclude.pop(
+                    book.id, f"Re-included (no longer in AudiobookShelf): {book.title}")))
+            session.add(book)
+    if re_included:
+        session.add(EventLog(
+            category="library",
+            message=f"Re-included {re_included} title(s) no longer matched in AudiobookShelf"))
+        log.info("abs_reinclude", count=re_included)
     if auto_excluded:
         session.add(EventLog(category="library",
                              message=f"Auto-excluded {auto_excluded} title(s) already in AudiobookShelf"))
     session.commit()
     log.info("abs_match_complete", checked=checked, matched=matched,
-             auto_excluded=auto_excluded, missing=missing)
+             auto_excluded=auto_excluded, missing=missing, re_included=re_included)
     return {"configured": True, "checked": checked, "matched": matched,
-            "auto_excluded": auto_excluded, "missing": missing}
+            "auto_excluded": auto_excluded, "missing": missing,
+            "re_included": re_included}

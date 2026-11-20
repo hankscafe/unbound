@@ -296,7 +296,7 @@ export const api = {
   batchDownload: (book_ids: number[]) =>
     req<{ queued: number }>(`/library/batch/download`, { method: "POST", ...body({ book_ids }) }),
   absMatch: () =>
-    req<{ checked: number; matched: number; auto_excluded: number; missing: number }>(`/library/abs-match`, {
+    req<{ checked: number; matched: number; auto_excluded: number; missing: number; re_included: number }>(`/library/abs-match`, {
       method: "POST",
     }),
 
